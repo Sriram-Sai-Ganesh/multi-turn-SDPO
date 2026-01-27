@@ -104,7 +104,10 @@ def _map_in_shards(dataset, split: str, num_shards: int, num_proc: int):
     processed_shards = []
     for i in range(num_shards):
         shard = dataset.shard(num_shards=num_shards, index=i)
-        shard = shard.map(function=make_map_fn(split), with_indices=True, num_proc=num_proc)
+        map_kwargs = {"function": make_map_fn(split), "with_indices": True}
+        if num_proc > 1:
+            map_kwargs["num_proc"] = num_proc
+        shard = shard.map(**map_kwargs)
         processed_shards.append(shard)
     return datasets.concatenate_datasets(processed_shards)
 
@@ -141,6 +144,10 @@ if __name__ == "__main__":
         "--data_source", type=str,
         help="HF dataset name."
     )
+    parser.add_argument(
+        "--num_proc", type=int, default=1,
+        help="Number of preprocessing workers. Use 1 in restricted environments."
+    )
     args = parser.parse_args()
     data_source = args.data_source
-    run_proprocessing(data_source=data_source)
+    run_proprocessing(data_source=data_source, num_proc=args.num_proc)
