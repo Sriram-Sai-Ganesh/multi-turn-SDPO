@@ -26,17 +26,17 @@ From the root of the repository:
 ```bash
 # Install dependencies
 # Option 1: Stable pinned versions matching the cluster stack (Recommended)
-pip install -r requirements-stable.txt
+uv pip install -r requirements-stable.txt
 
 # Option 2: Latest compatible versions
-# pip install -r requirements.txt
+# uv pip install -r requirements.txt
 
 # Install SDPO (verl) in editable mode
-pip install -e .
+uv pip install -e .
 
 
 # Install Flash Attention 2
-pip install flash-attn --no-build-isolation
+uv pip install flash-attn --no-build-isolation
 ```
 
 ---
@@ -68,7 +68,7 @@ This codebase supports vLLM and SGLang for high-throughput inference, which sign
 
 **Installation:**
 ```bash
-pip install -r requirements_sglang.txt
+uv pip install -r requirements_sglang.txt
 ```
 *Note: This command installs specific versions of SGLang and vLLM compatible with this codebase. Ensure your NVIDIA drivers are compatible with the installed CUDA toolkit (e.g., CUDA 12.4 if matching the PyTorch installation above).*
 
@@ -77,7 +77,7 @@ To verify the installation, you can run the tests:
 
 ```bash
 # Install test dependencies
-pip install pytest
+uv pip install pytest
 
 # Run tests
 pytest tests/
