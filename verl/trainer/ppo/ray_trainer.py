@@ -33,6 +33,7 @@ from typing import Any, Optional
 import numpy as np
 import ray
 import torch
+from tensordict import TensorDict
 from omegaconf import OmegaConf, open_dict
 from torch.utils.data import Dataset, Sampler
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -795,11 +796,70 @@ class RayPPOTrainer:
             "self_distillation_mask": self_distillation_mask,
         }), metrics
 
+    def _ensure_sync_rollout_tensors(self, batch: DataProto) -> None:
+        if batch.batch is not None and all(
+            key in batch.batch.keys() for key in ("input_ids", "attention_mask", "position_ids")
+        ):
+            return
+
+        raw_prompts = batch.non_tensor_batch.get("raw_prompt")
+        if raw_prompts is None:
+            raise ValueError("Synchronous HF rollout requires either token tensors or raw_prompt in the batch.")
+
+        apply_kwargs = self.config.data.get("apply_chat_template_kwargs", {})
+        if not isinstance(apply_kwargs, dict):
+            apply_kwargs = OmegaConf.to_container(apply_kwargs, resolve=True)
+        apply_kwargs = dict(apply_kwargs or {})
+        apply_kwargs["add_generation_prompt"] = True
+        apply_kwargs["tokenize"] = True
+
+        tool_schemas = getattr(self.train_dataset, "tool_schemas", None) or getattr(self.val_dataset, "tool_schemas", None)
+        if tool_schemas is not None:
+            apply_kwargs["tools"] = tool_schemas
+
+        prompt_token_ids = []
+        for raw_prompt in raw_prompts:
+            messages = raw_prompt.tolist() if hasattr(raw_prompt, "tolist") else raw_prompt
+            token_ids = self.tokenizer.apply_chat_template(messages, **apply_kwargs)
+            if isinstance(token_ids, torch.Tensor):
+                token_ids = token_ids.squeeze(0).tolist()
+            elif hasattr(token_ids, "tolist"):
+                token_ids = token_ids.tolist()
+            prompt_token_ids.append(token_ids)
+
+        prompt_output = self.tokenizer.pad(
+            {"input_ids": prompt_token_ids},
+            padding=True,
+            return_tensors="pt",
+            return_attention_mask=True,
+        )
+        input_ids, attention_mask = postprocess_data(
+            input_ids=prompt_output["input_ids"],
+            attention_mask=prompt_output["attention_mask"],
+            max_length=self.config.data.max_prompt_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            left_pad=True,
+            truncation=self.config.data.get("truncation", "error"),
+        )
+        position_ids = compute_position_id_with_mask(attention_mask)
+
+        if batch.batch is None:
+            batch.batch = TensorDict({}, batch_size=(len(prompt_token_ids),))
+        batch.batch["input_ids"] = input_ids
+        batch.batch["attention_mask"] = attention_mask
+        batch.batch["position_ids"] = position_ids
+
     def _get_gen_batch(self, batch: DataProto) -> DataProto:
         reward_model_keys = set({"data_source", "reward_model", "extra_info", "uid", "raw_prompt"}) & batch.non_tensor_batch.keys()
 
-        # pop those keys for generation
+        # Async agent-loop rollouts operate from non-tensor prompt metadata.
+        # Synchronous HF rollout needs the token tensors for generate().
         batch_keys_to_pop = []
+        if not self.async_rollout_mode:
+            self._ensure_sync_rollout_tensors(batch)
+            batch_keys_to_pop = [
+                key for key in ("input_ids", "attention_mask", "position_ids") if key in batch.batch.keys()
+            ]
         non_tensor_batch_keys_to_pop = set(batch.non_tensor_batch.keys()) - reward_model_keys
         gen_batch = batch.pop(
             batch_keys=batch_keys_to_pop,
@@ -1155,27 +1215,30 @@ class RayPPOTrainer:
         if self.ref_in_actor:
             self.ref_policy_wg = self.actor_rollout_wg
 
-        # create async rollout manager and request scheduler
-        # Note: mode is always "async" since sync mode is deprecated
-        self.async_rollout_mode = True
+        # vLLM/SGLang use the agent-loop server path. HF rollout is synchronous
+        # and runs directly through the actor-rollout worker group.
+        self.async_rollout_mode = self.config.actor_rollout_ref.rollout.name in {"vllm", "sglang"}
 
-        # Support custom AgentLoopManager via config
-        manager_class_fqn = self.config.actor_rollout_ref.rollout.get("agent", {}).get("agent_loop_manager_class")
-        if manager_class_fqn:
-            AgentLoopManager = load_class_from_fqn(manager_class_fqn, "AgentLoopManager")
+        if self.async_rollout_mode:
+            # Support custom AgentLoopManager via config
+            manager_class_fqn = self.config.actor_rollout_ref.rollout.get("agent", {}).get("agent_loop_manager_class")
+            if manager_class_fqn:
+                AgentLoopManager = load_class_from_fqn(manager_class_fqn, "AgentLoopManager")
+            else:
+                from verl.experimental.agent_loop import AgentLoopManager
+
+            if self.config.reward_model.enable and self.config.reward_model.enable_resource_pool:
+                rm_resource_pool = self.resource_pool_manager.get_resource_pool(Role.RewardModel)
+            else:
+                rm_resource_pool = None
+
+            self.async_rollout_manager = AgentLoopManager(
+                config=self.config,
+                worker_group=self.actor_rollout_wg,
+                rm_resource_pool=rm_resource_pool,
+            )
         else:
-            from verl.experimental.agent_loop import AgentLoopManager
-
-        if self.config.reward_model.enable and self.config.reward_model.enable_resource_pool:
-            rm_resource_pool = self.resource_pool_manager.get_resource_pool(Role.RewardModel)
-        else:
-            rm_resource_pool = None
-
-        self.async_rollout_manager = AgentLoopManager(
-            config=self.config,
-            worker_group=self.actor_rollout_wg,
-            rm_resource_pool=rm_resource_pool,
-        )
+            self.async_rollout_manager = None
 
     def _save_checkpoint(self):
         from verl.utils.fs import local_mkdir_safe
@@ -1699,7 +1762,9 @@ class RayPPOTrainer:
                     batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
                     # get images_seqlens
                     images_seqlens_all = []
-                    for multi_modal_input in batch.non_tensor_batch["multi_modal_inputs"]:
+                    for multi_modal_input in batch.non_tensor_batch.get("multi_modal_inputs", []):
+                        if not multi_modal_input:
+                            continue
                         if "image_grid_thw" not in multi_modal_input.keys():
                             continue
                         images_seqlens_all.extend(multi_modal_input["images_seqlens"].tolist())
