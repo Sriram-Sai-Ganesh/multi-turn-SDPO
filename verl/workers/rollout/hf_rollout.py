@@ -38,9 +38,17 @@ __all__ = ["HFRollout"]
 
 class HFRollout(BaseRollout):
     def __init__(self, module: nn.Module, config):
-        super().__init__()
         self.config = config
         self.module = module
+
+    async def resume(self, tags: list[str]):
+        return None
+
+    async def update_weights(self, weights, **kwargs):
+        return None
+
+    async def release(self):
+        return None
 
     def generate_sequences(self, prompts: DataProto) -> DataProto:
         batch_size = prompts.batch.batch_size[0]
