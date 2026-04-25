@@ -48,8 +48,11 @@ training path.
 New files:
 
 - `requirements-tinker.txt`: optional Tinker dependencies.
+- `run_tinker_sft.sh`: launcher for Tinker SFT training.
 - `run_tinker_grpo.sh`: launcher for Tinker GRPO training.
 - `run_tinker_eval.sh`: launcher for Tinker held-out evaluation.
+- `scripts/tinker_sft.py`: minimal SFT loop using Tinker cross-entropy updates
+  on this repo's JSON datasets.
 - `scripts/tinker_grpo.py`: minimal GRPO-style training loop using Tinker
   sampling, forward/backward, optimizer steps, and checkpoint storage.
 - `scripts/tinker_eval.py`: evaluates a base model or Tinker checkpoint against
@@ -57,6 +60,8 @@ New files:
 - `tests/test_tinker_grpo_helpers.py`: focused tests for data loading, reward
   wiring, ToolUse nested JSON parsing, SciKnowEval format diagnostics, and
   Tinker checkpoint path detection.
+- `tests/test_tinker_sft_helpers.py`: focused tests for SFT target formatting
+  and synthetic sharded demonstration expansion.
 
 Modified files:
 
@@ -75,7 +80,8 @@ Important Tinker behavior handled:
 - Tinker training checkpoints under `/weights/` are not directly usable for
   sampling. Eval needs `/sampler_weights/`. The trainer now saves both final
   paths, and eval can auto-export sampler weights if given a `/weights/` path.
-- Training/eval logs are written to `_logs/tinker_grpo` and `_logs/tinker_eval`.
+- Training/eval logs are written to `_logs/tinker_sft`, `_logs/tinker_grpo`,
+  and `_logs/tinker_eval`.
   The trainer now clears same-run JSONL files at startup to avoid appending
   stale results when reusing run names.
 - The API key is read only from `TINKER_API_KEY`; it is not written to tracked
@@ -86,9 +92,9 @@ Important Tinker behavior handled:
 Local checks currently pass:
 
 ```bash
-./.venv/bin/python -m py_compile scripts/tinker_grpo.py scripts/tinker_eval.py tests/test_tinker_grpo_helpers.py
-./.venv/bin/python -m pytest tests/test_tinker_grpo_helpers.py
-bash -n run_tinker_grpo.sh run_tinker_eval.sh
+./.venv/bin/python -m py_compile scripts/tinker_sft.py scripts/tinker_grpo.py scripts/tinker_eval.py tests/test_tinker_grpo_helpers.py tests/test_tinker_sft_helpers.py
+./.venv/bin/python -m pytest tests/test_tinker_grpo_helpers.py tests/test_tinker_sft_helpers.py
+bash -n run_tinker_sft.sh run_tinker_grpo.sh run_tinker_eval.sh
 ```
 
 Latest focused test result: `9 passed`.
