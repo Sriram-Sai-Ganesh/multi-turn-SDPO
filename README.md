@@ -156,6 +156,7 @@ pip install -r requirements_sglang.txt
 | `requirements-full.txt` | Complete pip freeze from working environment |
 | `requirements_sglang.txt` | SGLang/vLLM stack for local inference |
 | `requirements-cuda.txt` | Flash Attention (for non-Docker installs) |
+| `requirements-tinker.txt` | Optional Tinker SDK/cookbook dependencies for managed remote training |
 
 **vLLM Version Note:**
 ```
@@ -215,6 +216,63 @@ python data/preprocess.py \
     --data_source DATASET_PATH
 ```
 `DATASET_PATH` should contain the `train.json` and `test.json` files.
+
+---
+
+### Tinker Smoke Training
+
+The local/JHU path continues to use verl through `run_local_grpo.sh` and the
+SLURM wrappers. Tinker uses a separate launcher because Tinker runs sampling,
+forward/backward, optimizer steps, and checkpoints through its managed API.
+
+Install optional Tinker dependencies:
+
+```bash
+uv pip install -r requirements-tinker.txt
+```
+
+Export your key in the shell. Do not put it in a tracked file:
+
+```bash
+export TINKER_API_KEY="..."
+```
+
+Run the default one-step GRPO smoke job on `datasets/tooluse`:
+
+```bash
+./run_tinker_grpo.sh tinker-smoke
+```
+
+Common overrides:
+
+```bash
+MODEL_NAME=Qwen/Qwen3-8B DATA_PATH=datasets/tooluse BATCH_SIZE=1 ROLLOUT_N=2 MAX_STEPS=1 ./run_tinker_grpo.sh tinker-smoke
+```
+
+For ToolUse baselines on Qwen3, prefer disabling thinking so completions spend
+tokens on the required `Thought`/`Action` format instead of long `<think>` blocks:
+
+```bash
+RENDERER_NAME=qwen3_disable_thinking MAX_TOKENS=256 ./run_tinker_grpo.sh tooluse-grpo-baseline
+```
+
+Evaluate either the base model or a saved Tinker checkpoint on a held-out split:
+
+```bash
+RENDERER_NAME=qwen3_disable_thinking ./run_tinker_eval.sh tooluse-base-test
+
+MODEL_PATH=tinker://.../sampler_weights/... \
+RENDERER_NAME=qwen3_disable_thinking \
+./run_tinker_eval.sh tooluse-checkpoint-test
+```
+
+Use the `/sampler_weights/` path printed by the training runner for eval. If you
+pass a `/weights/` training checkpoint, the eval script will first export
+sampler weights automatically.
+
+The Tinker runners live in `scripts/tinker_grpo.py` and `scripts/tinker_eval.py`
+and reuse this repo's JSON datasets plus `verl.utils.reward_score.feedback`
+reward functions.
 
 ---
 

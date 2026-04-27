@@ -72,6 +72,41 @@ uv pip install -r requirements_sglang.txt
 ```
 *Note: This command installs specific versions of SGLang and vLLM compatible with this codebase. Ensure your NVIDIA drivers are compatible with the installed CUDA toolkit (e.g., CUDA 12.4 if matching the PyTorch installation above).*
 
+### Tinker (Managed Remote Training)
+
+Tinker support is optional and uses a separate launcher from the local/JHU verl path.
+Install the Tinker SDK dependencies only in environments where you plan to run
+remote Tinker jobs:
+
+```bash
+uv pip install -r requirements-tinker.txt
+```
+
+Set your API key in the shell before launching. Do not commit it to the repo:
+
+```bash
+export TINKER_API_KEY="..."
+```
+
+Run a one-step smoke job on the bundled ToolUse data:
+
+```bash
+./run_tinker_grpo.sh tinker-smoke
+```
+
+For Qwen3 ToolUse runs, `RENDERER_NAME=qwen3_disable_thinking` is recommended
+to avoid spending the sample budget on `<think>` blocks.
+
+Evaluate a base model or saved checkpoint with:
+
+```bash
+./run_tinker_eval.sh tinker-eval
+MODEL_PATH=tinker://.../sampler_weights/... ./run_tinker_eval.sh tinker-checkpoint-eval
+```
+
+The eval launcher expects sampler weights. If given a `/weights/` training
+checkpoint, it exports temporary sampler weights first.
+
 # Verification
 To verify the installation, you can run the tests:
 
@@ -91,4 +126,3 @@ This codebase was developed and tested using the **NVIDIA NGC 25.12** software s
 - **PyTorch**: `2.10.0a0+b4e4ee81d3.nv25.12`
 - **NGC Index**: `https://pypi.ngc.nvidia.com`
 - **CUDA**: 12.x (Optimized for GH200/H100)
-

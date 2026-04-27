@@ -1,5 +1,7 @@
-import re
+from __future__ import annotations
+
 import json
+import re
 from collections import Counter
 
 
@@ -10,16 +12,26 @@ def extract_actions(text: str) -> list[str]:
 
 
 def extract_action_inputs(text: str) -> dict:
-    """Extract and merge all JSON blocks following 'Action Input:'."""
-    json_blocks = re.findall(r'Action Input:\s*({.*?})', text, re.DOTALL)
-    
+    """Extract and merge JSON objects following 'Action Input:'.
+
+    A regex like ``{.*?}`` stops at the first closing brace, so it breaks for
+    nested action inputs such as {"headers": {...}, "data": {...}}. Use the
+    JSON decoder from the first non-whitespace character after each marker so
+    nested objects are parsed correctly.
+    """
+    decoder = json.JSONDecoder()
     combined_dict = {}
-    for block in json_blocks:
+    for match in re.finditer(r"Action Input:\s*", text, re.DOTALL):
+        start = match.end()
+        while start < len(text) and text[start].isspace():
+            start += 1
         try:
-            parsed = json.loads(block)
-            combined_dict.update(parsed)
+            parsed, _ = decoder.raw_decode(text[start:])
         except json.JSONDecodeError:
             pass
+        else:
+            if isinstance(parsed, dict):
+                combined_dict.update(parsed)
     
     return combined_dict
 
