@@ -47,7 +47,7 @@ SHUFFLE_SEED="${SHUFFLE_SEED:--1}"
 SHARDED_REWARD_MODE="${SHARDED_REWARD_MODE:-sparse}"
 SHARDED_PROMPT_STYLE="${SHARDED_PROMPT_STYLE:-default}"
 SHARDED_ALLOW_UNTAGGED_FINAL="${SHARDED_ALLOW_UNTAGGED_FINAL:-0}"
-SDPO_TEACHER_PROMPT_STYLE="${SDPO_TEACHER_PROMPT_STYLE:-default}"
+SDPO_TEACHER_PROMPT_STYLE="${SDPO_TEACHER_PROMPT_STYLE:-minimal_teacher}"
 LR="${LR:-1e-5}"
 LORA_RANK="${LORA_RANK:-32}"
 RENDERER_NAME="${RENDERER_NAME:-}"
@@ -68,7 +68,7 @@ echo "Sharded prompt style: $SHARDED_PROMPT_STYLE, allow untagged final: $SHARDE
 if [ "$SHARDED_REWARD_MODE" = "sdpo" ]; then
     echo "SDPO distill weight: ${SDPO_DISTILL_WEIGHT:-0.1}, topk: ${SDPO_TOPK:-20}"
     echo "SDPO skip first tokens: ${SDPO_SKIP_FIRST_N_TOKENS:-3}, teacher max tokens: ${SDPO_MAX_TEACHER_TOKENS:-256}"
-    echo "SDPO teacher temperature: ${SDPO_TEACHER_TEMPERATURE:-0.0}, distill on: ${SDPO_DISTILL_ON:-failed}, teacher prompt style: ${SDPO_TEACHER_PROMPT_STYLE:-default}"
+    echo "SDPO teacher temperature: ${SDPO_TEACHER_TEMPERATURE:-0.0}, distill on: ${SDPO_DISTILL_ON:-failed}, teacher prompt style: ${SDPO_TEACHER_PROMPT_STYLE:-minimal_teacher}"
 fi
 if [ "$SHUFFLE_SEED" -ge 0 ]; then
     echo "Shuffle seed: $SHUFFLE_SEED"
