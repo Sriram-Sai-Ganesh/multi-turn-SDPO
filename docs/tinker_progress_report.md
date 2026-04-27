@@ -966,16 +966,21 @@ Remaining gaps:
    with a short math system prompt), so this branch now supports a prompt
    ablation:
 
-   - `SHARDED_PROMPT_STYLE=minimal`: no system prompt, only the underspecified
-     question as the initial user message, and plain shard text in follow-up
+   - `SHARDED_PROMPT_STYLE=minimal`: the minimal domain system prompt plus a
+     `Q: ...` / `A:` initial user message, with plain shard text in follow-up
      turns.
-   - `SHARDED_PROMPT_STYLE=linc_math`: upstream-style math prompt for math rows,
-     minimal prompt for other rows.
+   - `SHARDED_PROMPT_STYLE=linc_math`: same minimal prompt shape; this remains
+     as a compatibility alias.
    - `SHARDED_ALLOW_UNTAGGED_FINAL=1`: score non-question untagged responses as
      final-answer attempts, so removing the XML instruction does not create a
      pure formatting failure.
-   - `SDPO_TEACHER_PROMPT_STYLE=brief`: use a shorter SDPO teacher prompt with a
-     "This may be under-specified..." prefix.
+   - `SDPO_TEACHER_PROMPT_STYLE=minimal_teacher`: the default SDPO teacher;
+     it only rewrites the system prompt with the added underspecification
+     suffix and otherwise keeps the original conversation state.
+   - `SDPO_TEACHER_PROMPT_STYLE=enhanced`: use the richer privileged teacher
+     prompt with the full task description and feedback context.
+   - `SDPO_TEACHER_PROMPT_STYLE=brief`: legacy shorter privileged teacher
+     prompt with a "This may be under-specified..." prefix.
 
    Next prompt-ablation command:
 
