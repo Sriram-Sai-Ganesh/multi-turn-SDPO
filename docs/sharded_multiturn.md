@@ -537,25 +537,30 @@ all necessary shards are revealed.
 
 ## Prompt-Confound Ablation
 
-The default sharded prompt is intentionally explicit about asking clarifying
-questions and using final-answer XML tags. That is useful for stable training,
-but it can confound claims about intrinsic multi-turn capability. The upstream
-Lost-in-Conversation math prompt is much lighter: a short math system prompt
-and a `Q: [[QUESTION]]` / `A:` completion shape. To separate prompt effects from
-learning effects, the Tinker sharded runner now supports prompt styles:
+The sharded prompt path now uses a minimal student prompt: a domain-specific
+system message of the form `As an expert problem solver solve step by step the
+following <domain> question.` plus an initial `Q: [[QUESTION]]` / `A:`
+completion shape. Prompt-style flags are still accepted for ablation
+compatibility, but the student prompt shape is now intentionally unified:
 
-- `SHARDED_PROMPT_STYLE=default`: current verbose system prompt and shard
-  follow-up instruction.
-- `SHARDED_PROMPT_STYLE=minimal`: no system prompt, initial user message is
-  only the underspecified question, and shard messages are only the revealed
-  shard text.
-- `SHARDED_PROMPT_STYLE=linc_math`: use the upstream math-style `Q: ... A:`
-  shape for math rows and the minimal style for non-math rows.
+- `SHARDED_PROMPT_STYLE=default`: minimal domain system prompt plus `Q: ... A:`
+  initial user message.
+- `SHARDED_PROMPT_STYLE=minimal`: same minimal domain system prompt plus
+  `Q: ... A:` initial user message; shard messages remain plain revealed shard
+  text.
+- `SHARDED_PROMPT_STYLE=linc_math`: same minimal domain system prompt plus
+  `Q: ... A:` initial user message.
 - `SHARDED_ALLOW_UNTAGGED_FINAL=1`: score untagged non-question responses as
-  final-answer attempts. This should be paired with minimal or `linc_math`
-  prompts because those prompts do not tell the model to use XML tags.
-- `SDPO_TEACHER_PROMPT_STYLE=brief`: use a shorter feedback teacher prompt
-  beginning with "This may be under-specified..." for SDPO runs.
+  final-answer attempts. This is useful because the minimal prompt no longer
+  tells the model to use XML tags.
+- `SDPO_TEACHER_PROMPT_STYLE=minimal_teacher`: default SDPO teacher mode. It
+  reuses the original conversation state and only changes the teacher system
+  prompt to the minimal system prompt plus the underspecification suffix.
+- `SDPO_TEACHER_PROMPT_STYLE=enhanced`: use the richer privileged teacher prompt
+  with the full problem setting, hidden shards, rubric feedback, and ideal
+  behavior description.
+- `SDPO_TEACHER_PROMPT_STYLE=brief`: legacy shorter privileged teacher prompt
+  with the same extra teacher suffix.
 
 Run this before interpreting dense/SDPO gains on the mixed split:
 
