@@ -668,6 +668,7 @@ Observed eval:
 | --- | ---: | ---: | ---: |
 | Base Qwen3 unlabeled | `5/10` | `50.0%` | `2/10` |
 | Sparse GRPO 30-step | `4/10` | `40.0%` | `2/10` |
+| Dense RLRF 30-step | `5/10` | `50.0%` | `2/10` |
 
 Example-level comparison:
 
@@ -681,3 +682,58 @@ shards and answered `$12`, while the sparse-GRPO checkpoint answered too early
 with `$8`. This reinforces the main final-project hypothesis: sparse terminal
 reward alone is not enough to reliably teach multi-turn information gathering
 and can worsen premature final-answer behavior.
+
+Observed dense/RLRF 30-step pilot:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
+RENDERER_NAME=qwen3_disable_thinking \
+SHARDED_REWARD_MODE=dense \
+SHUFFLE_SEED=7 \
+MAX_STEPS=30 \
+BATCH_SIZE=1 \
+ROLLOUT_N=4 \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+./run_tinker_grpo.sh lost-math-103-dense-rlrf-shuffle7-30
+```
+
+- train rows used: `30`
+- optimizer steps with nonzero advantages: `24/30`
+- skipped zero-advantage steps: `6/30`
+- assistant-turn datums used for nonzero-advantage updates: `168`
+- mean dense training reward across steps: `0.2485`
+- first-half mean dense training reward: `0.2619`
+- second-half mean dense training reward: `0.2352`
+- final sampler checkpoint:
+  `tinker://c5134071-73d9-57e7-873b-12cb184f0d7f:train:0/sampler_weights/lost-math-103-dense-rlrf-shuffle7-30-final-sampler`
+
+Dense checkpoint eval:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
+SPLIT=test \
+MODEL_PATH='tinker://c5134071-73d9-57e7-873b-12cb184f0d7f:train:0/sampler_weights/lost-math-103-dense-rlrf-shuffle7-30-final-sampler' \
+MODEL_NAME=Qwen/Qwen3-8B \
+RENDERER_NAME=qwen3_disable_thinking \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+TEMPERATURE=0.0 \
+BATCH_SIZE=1 \
+NUM_SAMPLES=1 \
+./run_tinker_eval.sh lost-math-103-dense-rlrf-shuffle7-30-eval
+```
+
+- reward: `5/10 = 50.0%`
+- format errors: `2/10 = 20.0%`
+- comparison to base: same `5` successes and same `5` failures
+- comparison to sparse GRPO: fixes the sparse regression on
+  `sharded-GSM8K/1027`
+
+Interpretation: dense/RLRF-style shaping gives much denser update signal than
+sparse GRPO (`24/30` nonzero steps versus `10/30`) and removes the one held-out
+regression caused by sparse GRPO's premature answer. It does not yet improve
+held-out accuracy over base on this small 10-row test split, so it should be
+treated as a promising but not yet successful final-project method.

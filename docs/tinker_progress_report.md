@@ -26,11 +26,10 @@ on Tinker without breaking the existing local/JHU `verl` path. That gives us a
 baseline harness and enough operational confidence to run sparse-GRPO
 comparisons before adding dense-feedback logic.
 
-Update after sparse baselines: the first dense/RLRF-style reward mode is now
-implemented as an opt-in sharded Tinker training mode. It is not full SDPO
-logit self-distillation yet; it is the rule-based dense feedback layer needed
-to test whether rewarding information-seeking behavior reduces premature final
-answers.
+Update after sparse baselines: the first dense/RLRF-style reward mode is
+implemented and has one 30-step Tinker pilot. It is not full SDPO logit
+self-distillation yet; it is the rule-based dense feedback layer needed to test
+whether rewarding information-seeking behavior reduces premature final answers.
 
 ## Code Changes So Far
 
@@ -473,8 +472,8 @@ The current work is not yet the final project method.
 
 Remaining gaps:
 
-- dense RLRF-style reward shaping is implemented, but the dense checkpoint
-  has not yet been run/evaluated on Tinker;
+- dense RLRF-style reward shaping is implemented and evaluated once, but has
+  not yet beaten base Qwen on held-out accuracy;
 - full SDPO-style logit self-distillation from feedback has not been
   implemented;
 - no CURIO-style curiosity baseline has been run;
@@ -614,6 +613,35 @@ Remaining gaps:
    it shows the sparse terminal baseline does not solve the core multi-turn
    information-gathering problem.
 
+   Completed dense/RLRF 30-step pilot:
+
+   - run: `lost-math-103-dense-rlrf-shuffle7-30`
+   - train rows used: `30`
+   - optimizer steps with nonzero advantages: `24/30`
+   - skipped zero-advantage steps: `6/30`
+   - assistant-turn datums used for nonzero-advantage updates: `168`
+   - mean dense training reward across steps: `0.2485`
+   - first-half mean dense training reward: `0.2619`
+   - second-half mean dense training reward: `0.2352`
+   - final sampler checkpoint:
+     `tinker://c5134071-73d9-57e7-873b-12cb184f0d7f:train:0/sampler_weights/lost-math-103-dense-rlrf-shuffle7-30-final-sampler`
+
+   Dense checkpoint eval:
+
+   - run: `lost-math-103-dense-rlrf-shuffle7-30-eval`
+   - reward: `5/10 = 50.0%`
+   - format errors: `2/10 = 20.0%`
+   - comparison to base: same `5` successes and same `5` failures
+   - comparison to sparse GRPO: fixes the sparse regression on
+     `sharded-GSM8K/1027`; dense waits for all `5` hidden shards and answers
+     `$12`
+
+   Interpretation: dense shaping materially improves the density of the
+   training signal over sparse GRPO (`24/30` update steps instead of `10/30`)
+   and avoids the observed sparse-regression failure. However, it ties the base
+   model on held-out accuracy rather than improving it. This supports the
+   project motivation but is not yet a positive final-method result.
+
 3. Scale the Lost in Conversation conversion if reward signal is usable.
 
    The next sparse-GRPO run should use `datasets/sharded_multiturn/lost_math_200`
@@ -635,9 +663,16 @@ Remaining gaps:
      scorer;
    - dense advantages are centered by turn index within each rollout group.
 
-   The next run should train a dense checkpoint on
-   `datasets/sharded_multiturn/lost_math_200` and evaluate it with the same
-   sparse held-out accuracy metric used for the base and sparse-GRPO baselines.
+   Completed first dense pilot:
+
+   - dense train signal: `24/30` nonzero optimizer steps, compared with
+     `10/30` for sparse GRPO;
+   - dense eval: `5/10`, matching base Qwen and beating sparse GRPO's `4/10`;
+   - dense fixed the sparse-regressed `sharded-GSM8K/1027` example.
+
+   Next dense work should test whether this can become a real accuracy gain by
+   either running a longer/larger dense pilot or adding SDPO-style
+   self-distillation from the dense feedback traces.
 
 5. Run a minimal local/JHU smoke test.
 
