@@ -15,7 +15,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.tinker_grpo import load_json_records, resolve_split_file, row_to_messages, score_response, wait_result
+from scripts.sharded_multiturn import SampledResponse, ShardedTask, run_sharded_interaction
+from scripts.tinker_grpo import (
+    is_sharded_multiturn_row,
+    load_json_records,
+    resolve_split_file,
+    row_to_messages,
+    score_response,
+    wait_result,
+)
 
 LOGGER = logging.getLogger("tinker_eval")
 
@@ -51,6 +59,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=int(os.environ.get("BATCH_SIZE", "8")))
     parser.add_argument("--num-samples", type=int, default=int(os.environ.get("NUM_SAMPLES", "1")))
     parser.add_argument("--max-examples", type=int, default=int(os.environ.get("MAX_EXAMPLES", "0")))
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=int(os.environ.get("MAX_TURNS", "0")),
+        help="Max assistant turns for sharded_multiturn rows; 0 uses len(shards)+1.",
+    )
     parser.add_argument("--max-tokens", type=int, default=int(os.environ.get("MAX_TOKENS", "256")))
     parser.add_argument("--temperature", type=float, default=float(os.environ.get("TEMPERATURE", "0.0")))
     parser.add_argument("--dry-run", action="store_true", help="Validate local inputs without contacting Tinker.")
@@ -141,40 +155,84 @@ def main() -> None:
     for start in range(0, len(rows), args.batch_size):
         batch_rows = rows[start : start + args.batch_size]
         futures = []
-        for row in batch_rows:
-            prompt = renderer.build_generation_prompt(row_to_messages(row))
-            futures.append(
-                sampling_client.sample(
-                    prompt=prompt,
-                    num_samples=args.num_samples,
-                    sampling_params=sampling_params,
-                )
-            )
+        sharded_flags = [is_sharded_multiturn_row(row) for row in batch_rows]
+        if any(sharded_flags) and not all(sharded_flags):
+            raise ValueError("Mixed sharded_multiturn and single-turn rows in one eval batch are not supported.")
 
-        for row, future in zip(batch_rows, futures):
-            sample_result = wait_result(future)
-            row_rewards: list[float] = []
-            for sample_idx, sequence in enumerate(sample_result.sequences):
-                sampled_tokens = list(sequence.tokens)
-                parsed_message, _ = renderer.parse_response(sampled_tokens)
-                response = renderers.get_text_content(parsed_message)
-                score = score_response(row, response, args.split)
-                reward = float(score.get("score", 0.0))
-                rewards.append(reward)
-                row_rewards.append(reward)
-                format_errors += int(score.get("incorrect_format", 0))
-                write_jsonl(
-                    samples_path,
-                    {
-                        "idx": row.get("idx"),
-                        "dataset": row.get("dataset"),
-                        "sample_idx": sample_idx,
-                        "reward": reward,
-                        "response": response,
-                        "score": score,
-                    },
+        if all(sharded_flags):
+            for row in batch_rows:
+                task = ShardedTask.from_row(row)
+                row_rewards: list[float] = []
+                for sample_idx in range(args.num_samples):
+                    def sample_fn(messages: list[dict[str, str]]) -> SampledResponse:
+                        prompt = renderer.build_generation_prompt(messages)
+                        sample_result = wait_result(
+                            sampling_client.sample(
+                                prompt=prompt,
+                                num_samples=1,
+                                sampling_params=sampling_params,
+                            )
+                        )
+                        sequence = sample_result.sequences[0]
+                        sampled_tokens = list(sequence.tokens)
+                        parsed_message, _ = renderer.parse_response(sampled_tokens)
+                        response = renderers.get_text_content(parsed_message)
+                        return SampledResponse(text=response, tokens=sampled_tokens, prompt=prompt)
+
+                    rollout = run_sharded_interaction(
+                        task,
+                        sample_fn,
+                        max_turns=args.max_turns if args.max_turns > 0 else None,
+                    )
+                    reward = rollout.reward
+                    rewards.append(reward)
+                    row_rewards.append(reward)
+                    format_errors += int(rollout.score.get("incorrect_format", 0))
+                    record = rollout.to_log_record()
+                    record.update(
+                        {
+                            "idx": row.get("idx"),
+                            "dataset": row.get("dataset"),
+                            "sample_idx": sample_idx,
+                        }
+                    )
+                    write_jsonl(samples_path, record)
+                examples_with_success += int(any(reward > 0 for reward in row_rewards))
+        else:
+            for row in batch_rows:
+                prompt = renderer.build_generation_prompt(row_to_messages(row))
+                futures.append(
+                    sampling_client.sample(
+                        prompt=prompt,
+                        num_samples=args.num_samples,
+                        sampling_params=sampling_params,
+                    )
                 )
-            examples_with_success += int(any(reward > 0 for reward in row_rewards))
+
+            for row, future in zip(batch_rows, futures):
+                sample_result = wait_result(future)
+                row_rewards: list[float] = []
+                for sample_idx, sequence in enumerate(sample_result.sequences):
+                    sampled_tokens = list(sequence.tokens)
+                    parsed_message, _ = renderer.parse_response(sampled_tokens)
+                    response = renderers.get_text_content(parsed_message)
+                    score = score_response(row, response, args.split)
+                    reward = float(score.get("score", 0.0))
+                    rewards.append(reward)
+                    row_rewards.append(reward)
+                    format_errors += int(score.get("incorrect_format", 0))
+                    write_jsonl(
+                        samples_path,
+                        {
+                            "idx": row.get("idx"),
+                            "dataset": row.get("dataset"),
+                            "sample_idx": sample_idx,
+                            "reward": reward,
+                            "response": response,
+                            "score": score,
+                        },
+                    )
+                examples_with_success += int(any(reward > 0 for reward in row_rewards))
 
         LOGGER.info(
             "evaluated=%d/%d reward_mean=%.4f",

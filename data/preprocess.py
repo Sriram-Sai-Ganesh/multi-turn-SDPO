@@ -50,8 +50,8 @@ def make_map_fn(split: str):
             solution = example.pop("answer")
             global_id = example.pop("idx")
 
-            tests = example.pop("tests")
-            description = example.pop("description")
+            tests = example.pop("tests", "-")
+            description = example.pop("description", question)
             reward_style = example.pop("kind")
 
             if split == "train" and "achievement_prior" in example.keys():
@@ -60,7 +60,7 @@ def make_map_fn(split: str):
                 achievement_prior = 0
 
             data_source = example.pop("dataset")
-            elo = example.pop("elo")
+            elo = example.pop("elo", 1500)
 
             if reward_style == "code":
                 solution = tests
@@ -76,7 +76,10 @@ def make_map_fn(split: str):
                 "description": description,
                 "problem": question,
                 "elo": elo,
-                "achievement_prior": achievement_prior
+                "achievement_prior": achievement_prior,
+                "reward_kind": reward_style,
+                "shards": example.get("shards", []),
+                "full_prompt": example.get("full_prompt", example.get("fully_specified_prompt", "")),
             }
 
             if system is not None:

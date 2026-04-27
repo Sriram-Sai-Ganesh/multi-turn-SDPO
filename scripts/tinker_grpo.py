@@ -11,6 +11,8 @@ import argparse
 import json
 import logging
 import os
+import random
+import sys
 import time
 import types as py_types
 from functools import lru_cache
@@ -19,6 +21,10 @@ from typing import Any
 
 LOGGER = logging.getLogger("tinker_grpo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.sharded_multiturn import SampledResponse, ShardedTask, run_sharded_interaction
 
 
 def load_json_records(path: Path) -> list[dict[str, Any]]:
@@ -45,7 +51,19 @@ def resolve_split_file(data_path: str, split: str) -> Path:
     return path
 
 
+def shuffle_records(records: list[dict[str, Any]], seed: int | None) -> list[dict[str, Any]]:
+    if seed is None or seed < 0:
+        return records
+    shuffled = list(records)
+    random.Random(seed).shuffle(shuffled)
+    return shuffled
+
+
 def row_to_messages(row: dict[str, Any]) -> list[dict[str, str]]:
+    if is_sharded_multiturn_row(row):
+        from scripts.sharded_multiturn import initial_messages
+
+        return initial_messages(ShardedTask.from_row(row))
     messages: list[dict[str, str]] = []
     system = row.get("system")
     if system:
@@ -72,6 +90,10 @@ def extra_info_for_row(row: dict[str, Any], split: str) -> dict[str, Any]:
     }
 
 
+def is_sharded_multiturn_row(row: dict[str, Any]) -> bool:
+    return str(row.get("dataset")) == "sharded_multiturn"
+
+
 @lru_cache(maxsize=None)
 def load_feedback_module(name: str) -> Any:
     module_path = REPO_ROOT / "verl" / "utils" / "reward_score" / "feedback" / f"{name}.py"
@@ -86,6 +108,10 @@ def load_feedback_module(name: str) -> Any:
 
 def score_response(row: dict[str, Any], response: str, split: str) -> dict[str, Any]:
     data_source = str(row["dataset"])
+    if data_source == "sharded_multiturn":
+        from scripts.sharded_multiturn import score_sharded_response
+
+        return score_sharded_response(response, ShardedTask.from_row(row))
     ground_truth = ground_truth_for_row(row)
     extra_info = extra_info_for_row(row, split)
 
@@ -128,6 +154,46 @@ def wait_result(value: Any) -> Any:
     return value
 
 
+def _pid_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def acquire_run_lock(log_dir: Path, run_name: str) -> Path:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = log_dir / f"{run_name}.lock"
+    if lock_path.exists():
+        try:
+            pid = int(lock_path.read_text(encoding="utf-8").strip())
+        except ValueError:
+            pid = -1
+        if pid > 0 and _pid_is_running(pid):
+            raise SystemExit(
+                f"Run {run_name!r} already appears to be active with pid {pid}. "
+                "Use a different run name or wait for it to finish."
+            )
+        lock_path.unlink()
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(str(os.getpid()))
+    return lock_path
+
+
+def release_run_lock(lock_path: Path | None) -> None:
+    if lock_path is None:
+        return
+    try:
+        if lock_path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            lock_path.unlink()
+    except FileNotFoundError:
+        return
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a small GRPO-style Tinker training job.")
     parser.add_argument("--data-path", default=os.environ.get("DATA_PATH", "datasets/tooluse"))
@@ -144,8 +210,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=int(os.environ.get("BATCH_SIZE", "1")))
     parser.add_argument("--rollout-n", type=int, default=int(os.environ.get("ROLLOUT_N", "2")))
     parser.add_argument("--max-steps", type=int, default=int(os.environ.get("MAX_STEPS", "1")))
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=int(os.environ.get("MAX_TURNS", "0")),
+        help="Max assistant turns for sharded_multiturn rows; 0 uses len(shards)+1.",
+    )
     parser.add_argument("--max-tokens", type=int, default=int(os.environ.get("MAX_TOKENS", "512")))
     parser.add_argument("--temperature", type=float, default=float(os.environ.get("TEMPERATURE", "1.0")))
+    parser.add_argument(
+        "--shuffle-seed",
+        type=int,
+        default=int(os.environ.get("SHUFFLE_SEED", "-1")),
+        help="Shuffle training rows before selecting max_steps * batch_size rows; negative disables shuffling.",
+    )
     parser.add_argument("--learning-rate", type=float, default=float(os.environ.get("LR", "1e-5")))
     parser.add_argument("--lora-rank", type=int, default=int(os.environ.get("LORA_RANK", "32")))
     parser.add_argument("--save-every", type=int, default=int(os.environ.get("SAVE_EVERY", "0")))
@@ -161,6 +239,7 @@ def main() -> None:
     rows = load_json_records(split_file)
     if not rows:
         raise SystemExit(f"No records found in {split_file}")
+    rows = shuffle_records(rows, args.shuffle_seed)
     max_examples = min(len(rows), args.batch_size * args.max_steps)
     rows = rows[:max_examples]
     LOGGER.info("Loaded %d %s records from %s", len(rows), args.split, split_file)
@@ -185,149 +264,231 @@ def main() -> None:
         raise SystemExit("Install Tinker dependencies with: uv pip install -r requirements-tinker.txt") from exc
 
     log_dir = Path(args.log_dir)
+    lock_path = acquire_run_lock(log_dir, args.run_name)
     metrics_path = log_dir / f"{args.run_name}-metrics.jsonl"
     samples_path = log_dir / f"{args.run_name}-samples.jsonl"
-    for path in (metrics_path, samples_path):
-        if path.exists():
-            path.unlink()
 
-    tokenizer = get_tokenizer(args.model_name)
-    renderer_name = args.renderer_name or model_info.get_recommended_renderer_name(args.model_name)
-    renderer = renderers.get_renderer(renderer_name, tokenizer, model_name=args.model_name)
-    sampling_params = types.SamplingParams(
-        max_tokens=args.max_tokens,
-        temperature=args.temperature,
-        stop=renderer.get_stop_sequences(),
-    )
-    adam_params = types.AdamParams(
-        learning_rate=args.learning_rate,
-        beta1=0.9,
-        beta2=0.95,
-        eps=1e-8,
-    )
+    try:
+        for path in (metrics_path, samples_path):
+            if path.exists():
+                path.unlink()
 
-    LOGGER.info("Using Tinker model=%s renderer=%s", args.model_name, renderer_name)
-    service_client = tinker.ServiceClient(base_url=args.base_url)
-    training_client = service_client.create_lora_training_client(
-        base_model=args.model_name,
-        rank=args.lora_rank,
-    )
-    total_steps = min(args.max_steps, (len(rows) + args.batch_size - 1) // args.batch_size)
+        tokenizer = get_tokenizer(args.model_name)
+        renderer_name = args.renderer_name or model_info.get_recommended_renderer_name(args.model_name)
+        renderer = renderers.get_renderer(renderer_name, tokenizer, model_name=args.model_name)
+        sampling_params = types.SamplingParams(
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            stop=renderer.get_stop_sequences(),
+        )
+        adam_params = types.AdamParams(
+            learning_rate=args.learning_rate,
+            beta1=0.9,
+            beta2=0.95,
+            eps=1e-8,
+        )
 
-    for step in range(total_steps):
-        start_time = time.time()
-        batch_rows = rows[step * args.batch_size : (step + 1) * args.batch_size]
-        sampling_client = training_client.save_weights_and_get_sampling_client()
+        LOGGER.info("Using Tinker model=%s renderer=%s", args.model_name, renderer_name)
+        service_client = tinker.ServiceClient(base_url=args.base_url)
+        training_client = service_client.create_lora_training_client(
+            base_model=args.model_name,
+            rank=args.lora_rank,
+        )
+        total_steps = min(args.max_steps, (len(rows) + args.batch_size - 1) // args.batch_size)
 
-        futures = []
-        prompts = []
-        for row in batch_rows:
-            prompt = renderer.build_generation_prompt(row_to_messages(row))
-            futures.append(
-                sampling_client.sample(
-                    prompt=prompt,
-                    num_samples=args.rollout_n,
-                    sampling_params=sampling_params,
-                )
-            )
-            prompts.append(prompt)
-
-        datums = []
-        group_rewards: list[float] = []
-        sample_count = 0
-        for row, prompt, future in zip(batch_rows, prompts, futures):
-            sample_result = wait_result(future)
-            rewards: list[float] = []
-            sampled_payloads = []
-            for sequence in sample_result.sequences:
-                sampled_tokens = list(sequence.tokens)
-                sampled_logprobs = sequence.logprobs
-                if sampled_logprobs is None or len(sampled_tokens) == 0:
-                    continue
-                parsed_message, _ = renderer.parse_response(sampled_tokens)
-                response = renderers.get_text_content(parsed_message)
-                score = score_response(row, response, args.split)
-                reward = float(score.get("score", 0.0))
-                rewards.append(reward)
-                sampled_payloads.append((sampled_tokens, list(sampled_logprobs), response, score))
-                write_jsonl(
-                    samples_path,
-                    {
-                        "step": step,
-                        "idx": row.get("idx"),
-                        "dataset": row.get("dataset"),
-                        "reward": reward,
-                        "response": response,
-                        "score": score,
+        def add_training_datum(
+            datums: list[Any],
+            prompt: Any,
+            sampled_tokens: list[int],
+            sampled_logprobs: list[float],
+            advantage: float,
+        ) -> bool:
+            if abs(advantage) < 1e-12:
+                return False
+            if not sampled_tokens or not sampled_logprobs:
+                return False
+            ob_len = prompt.length - 1
+            model_input = prompt.append(types.EncodedTextChunk(tokens=sampled_tokens[:-1]))
+            target_tokens = [0] * ob_len + sampled_tokens
+            padded_logprobs = [0.0] * ob_len + sampled_logprobs
+            padded_advantages = [0.0] * ob_len + [advantage] * (model_input.length - ob_len)
+            if not (
+                model_input.length == len(target_tokens) == len(padded_logprobs) == len(padded_advantages)
+            ):
+                raise RuntimeError("Tinker datum length mismatch while assembling rollout data.")
+            datums.append(
+                types.Datum(
+                    model_input=model_input,
+                    loss_fn_inputs={
+                        "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
+                        "logprobs": TensorData.from_torch(torch.tensor(padded_logprobs)),
+                        "advantages": TensorData.from_torch(torch.tensor(padded_advantages)),
                     },
                 )
+            )
+            return True
 
-            if not rewards:
-                continue
-            reward_mean = mean(rewards)
-            advantages = [reward - reward_mean for reward in rewards]
-            group_rewards.append(reward_mean)
+        for step in range(total_steps):
+            start_time = time.time()
+            batch_rows = rows[step * args.batch_size : (step + 1) * args.batch_size]
+            sampling_client = training_client.save_weights_and_get_sampling_client()
 
-            for (sampled_tokens, sampled_logprobs, _response, _score), advantage in zip(sampled_payloads, advantages):
-                ob_len = prompt.length - 1
-                model_input = prompt.append(types.EncodedTextChunk(tokens=sampled_tokens[:-1]))
-                target_tokens = [0] * ob_len + sampled_tokens
-                padded_logprobs = [0.0] * ob_len + sampled_logprobs
-                padded_advantages = [0.0] * ob_len + [advantage] * (model_input.length - ob_len)
-                if not (
-                    model_input.length == len(target_tokens) == len(padded_logprobs) == len(padded_advantages)
-                ):
-                    raise RuntimeError("Tinker datum length mismatch while assembling rollout data.")
-                datums.append(
-                    types.Datum(
-                        model_input=model_input,
-                        loss_fn_inputs={
-                            "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
-                            "logprobs": TensorData.from_torch(torch.tensor(padded_logprobs)),
-                            "advantages": TensorData.from_torch(torch.tensor(padded_advantages)),
-                        },
+            futures = []
+            prompts = []
+            datums = []
+            group_rewards: list[float] = []
+            sample_count = 0
+            sharded_flags = [is_sharded_multiturn_row(row) for row in batch_rows]
+            if any(sharded_flags) and not all(sharded_flags):
+                raise ValueError("Mixed sharded_multiturn and single-turn rows in one batch are not supported.")
+
+            if all(sharded_flags):
+                for row in batch_rows:
+                    task = ShardedTask.from_row(row)
+                    rollouts = []
+                    rewards: list[float] = []
+                    for rollout_idx in range(args.rollout_n):
+                        def sample_fn(messages: list[dict[str, str]]) -> SampledResponse:
+                            prompt = renderer.build_generation_prompt(messages)
+                            sample_result = wait_result(
+                                sampling_client.sample(
+                                    prompt=prompt,
+                                    num_samples=1,
+                                    sampling_params=sampling_params,
+                                )
+                            )
+                            sequence = sample_result.sequences[0]
+                            sampled_tokens = list(sequence.tokens)
+                            sampled_logprobs = list(sequence.logprobs or [])
+                            parsed_message, _ = renderer.parse_response(sampled_tokens)
+                            response = renderers.get_text_content(parsed_message)
+                            return SampledResponse(
+                                text=response,
+                                tokens=sampled_tokens,
+                                logprobs=sampled_logprobs,
+                                prompt=prompt,
+                            )
+
+                        rollout = run_sharded_interaction(
+                            task,
+                            sample_fn,
+                            max_turns=args.max_turns if args.max_turns > 0 else None,
+                        )
+                        rollouts.append(rollout)
+                        rewards.append(rollout.reward)
+                        record = rollout.to_log_record()
+                        record.update(
+                            {
+                                "step": step,
+                                "idx": row.get("idx"),
+                                "dataset": row.get("dataset"),
+                                "rollout_idx": rollout_idx,
+                            }
+                        )
+                        write_jsonl(samples_path, record)
+
+                    reward_mean = mean(rewards)
+                    advantages = [reward - reward_mean for reward in rewards]
+                    group_rewards.append(reward_mean)
+                    for rollout, advantage in zip(rollouts, advantages):
+                        for turn in rollout.turns:
+                            if add_training_datum(
+                                datums,
+                                turn.prompt,
+                                turn.sampled_tokens,
+                                turn.sampled_logprobs,
+                                advantage,
+                            ):
+                                sample_count += 1
+            else:
+                for row in batch_rows:
+                    prompt = renderer.build_generation_prompt(row_to_messages(row))
+                    futures.append(
+                        sampling_client.sample(
+                            prompt=prompt,
+                            num_samples=args.rollout_n,
+                            sampling_params=sampling_params,
+                        )
                     )
-                )
-                sample_count += 1
+                    prompts.append(prompt)
 
-        train_loss = None
-        fwd_bwd_metrics = {}
-        optim_metrics = {}
-        if datums:
-            fwd_bwd_future = training_client.forward_backward(datums, loss_fn="importance_sampling")
-            optim_future = training_client.optim_step(adam_params)
-            fwd_bwd_result = wait_result(fwd_bwd_future)
-            optim_result = wait_result(optim_future)
-            train_loss = getattr(fwd_bwd_result, "loss", None)
-            fwd_bwd_metrics = {
-                f"fwd_bwd/{key}": value for key, value in (getattr(fwd_bwd_result, "metrics", None) or {}).items()
+                for row, prompt, future in zip(batch_rows, prompts, futures):
+                    sample_result = wait_result(future)
+                    rewards: list[float] = []
+                    sampled_payloads = []
+                    for sequence in sample_result.sequences:
+                        sampled_tokens = list(sequence.tokens)
+                        sampled_logprobs = sequence.logprobs
+                        if sampled_logprobs is None or len(sampled_tokens) == 0:
+                            continue
+                        parsed_message, _ = renderer.parse_response(sampled_tokens)
+                        response = renderers.get_text_content(parsed_message)
+                        score = score_response(row, response, args.split)
+                        reward = float(score.get("score", 0.0))
+                        rewards.append(reward)
+                        sampled_payloads.append((sampled_tokens, list(sampled_logprobs), response, score))
+                        write_jsonl(
+                            samples_path,
+                            {
+                                "step": step,
+                                "idx": row.get("idx"),
+                                "dataset": row.get("dataset"),
+                                "reward": reward,
+                                "response": response,
+                                "score": score,
+                            },
+                        )
+
+                    if not rewards:
+                        continue
+                    reward_mean = mean(rewards)
+                    advantages = [reward - reward_mean for reward in rewards]
+                    group_rewards.append(reward_mean)
+
+                    for (sampled_tokens, sampled_logprobs, _response, _score), advantage in zip(
+                        sampled_payloads, advantages
+                    ):
+                        if add_training_datum(datums, prompt, sampled_tokens, sampled_logprobs, advantage):
+                            sample_count += 1
+
+            train_loss = None
+            fwd_bwd_metrics = {}
+            optim_metrics = {}
+            if datums:
+                fwd_bwd_future = training_client.forward_backward(datums, loss_fn="importance_sampling")
+                optim_future = training_client.optim_step(adam_params)
+                fwd_bwd_result = wait_result(fwd_bwd_future)
+                optim_result = wait_result(optim_future)
+                train_loss = getattr(fwd_bwd_result, "loss", None)
+                fwd_bwd_metrics = {
+                    f"fwd_bwd/{key}": value for key, value in (getattr(fwd_bwd_result, "metrics", None) or {}).items()
+                }
+                optim_metrics = getattr(optim_result, "metrics", None) or {}
+            else:
+                LOGGER.warning("Step %d produced no non-zero advantages; skipped optimizer step.", step)
+
+            if args.save_every > 0 and (step + 1) % args.save_every == 0:
+                wait_result(training_client.save_state(name=f"{args.run_name}-step-{step + 1:06d}"))
+
+            metrics = {
+                "step": step,
+                "examples": len(batch_rows),
+                "samples_used": sample_count,
+                "reward_mean": mean(group_rewards),
+                "loss": train_loss,
+                "time_sec": time.time() - start_time,
+                **fwd_bwd_metrics,
+                **optim_metrics,
             }
-            optim_metrics = getattr(optim_result, "metrics", None) or {}
-        else:
-            LOGGER.warning("Step %d produced no non-zero advantages; skipped optimizer step.", step)
+            write_jsonl(metrics_path, metrics)
+            LOGGER.info("step=%d reward_mean=%.4f samples_used=%d", step, metrics["reward_mean"], sample_count)
 
-        if args.save_every > 0 and (step + 1) % args.save_every == 0:
-            wait_result(training_client.save_state(name=f"{args.run_name}-step-{step + 1:06d}"))
-
-        metrics = {
-            "step": step,
-            "examples": len(batch_rows),
-            "samples_used": sample_count,
-            "reward_mean": mean(group_rewards),
-            "loss": train_loss,
-            "time_sec": time.time() - start_time,
-            **fwd_bwd_metrics,
-            **optim_metrics,
-        }
-        write_jsonl(metrics_path, metrics)
-        LOGGER.info("step=%d reward_mean=%.4f samples_used=%d", step, metrics["reward_mean"], sample_count)
-
-    final_state = wait_result(training_client.save_state(name=f"{args.run_name}-final"))
-    final_sampler = wait_result(
-        training_client.save_weights_for_sampler(name=f"{args.run_name}-final-sampler")
-    )
-    LOGGER.info("Saved final Tinker state: %s", final_state)
-    LOGGER.info("Saved final Tinker sampler weights: %s", final_sampler)
+        final_state = wait_result(training_client.save_state(name=f"{args.run_name}-final"))
+        final_sampler = wait_result(training_client.save_weights_for_sampler(name=f"{args.run_name}-final-sampler"))
+        LOGGER.info("Saved final Tinker state: %s", final_state)
+        LOGGER.info("Saved final Tinker sampler weights: %s", final_sampler)
+    finally:
+        release_run_lock(lock_path)
 
 
 if __name__ == "__main__":

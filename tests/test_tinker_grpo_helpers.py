@@ -2,11 +2,14 @@ import json
 
 from scripts.tinker_eval import is_training_state_path
 from scripts.tinker_grpo import (
+    acquire_run_lock,
     extra_info_for_row,
     ground_truth_for_row,
     load_json_records,
+    release_run_lock,
     row_to_messages,
     score_response,
+    shuffle_records,
 )
 
 
@@ -22,6 +25,33 @@ def test_load_json_records_supports_arrays(tmp_path):
     path.write_text(json.dumps([{"idx": 1}, {"idx": 2}]), encoding="utf-8")
 
     assert load_json_records(path) == [{"idx": 1}, {"idx": 2}]
+
+
+def test_shuffle_records_is_deterministic_and_non_mutating():
+    rows = [{"idx": i} for i in range(10)]
+
+    shuffled_a = shuffle_records(rows, seed=3)
+    shuffled_b = shuffle_records(rows, seed=3)
+
+    assert shuffled_a == shuffled_b
+    assert shuffled_a != rows
+    assert rows == [{"idx": i} for i in range(10)]
+    assert shuffle_records(rows, seed=-1) is rows
+
+
+def test_run_lock_blocks_active_duplicate(tmp_path):
+    lock = acquire_run_lock(tmp_path, "run-a")
+    try:
+        try:
+            acquire_run_lock(tmp_path, "run-a")
+        except SystemExit as exc:
+            assert "already appears to be active" in str(exc)
+        else:
+            raise AssertionError("duplicate active run lock was not rejected")
+    finally:
+        release_run_lock(lock)
+
+    assert not lock.exists()
 
 
 def test_row_to_messages_preserves_optional_system_prompt():

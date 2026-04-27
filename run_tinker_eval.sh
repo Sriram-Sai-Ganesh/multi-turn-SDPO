@@ -7,7 +7,7 @@ set -euo pipefail
 #   export TINKER_API_KEY=...
 #
 # Common overrides:
-#   MODEL_NAME, MODEL_PATH, DATA_PATH, SPLIT, BATCH_SIZE, NUM_SAMPLES,
+#   MODEL_NAME, MODEL_PATH, DATA_PATH, SPLIT, BATCH_SIZE, NUM_SAMPLES, MAX_TURNS,
 #   MAX_EXAMPLES, MAX_TOKENS, TEMPERATURE, RENDERER_NAME, TINKER_BASE_URL
 
 export PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -38,6 +38,7 @@ MODEL_PATH="${MODEL_PATH:-}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NUM_SAMPLES="${NUM_SAMPLES:-1}"
 MAX_EXAMPLES="${MAX_EXAMPLES:-0}"
+MAX_TURNS="${MAX_TURNS:-0}"
 MAX_TOKENS="${MAX_TOKENS:-256}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
 RENDERER_NAME="${RENDERER_NAME:-}"
@@ -56,7 +57,7 @@ if [ -n "$RENDERER_NAME" ]; then
     echo "Renderer: $RENDERER_NAME"
 fi
 echo "Python: $PYTHON_BIN"
-echo "Batch size: $BATCH_SIZE, num_samples: $NUM_SAMPLES, max_examples: $MAX_EXAMPLES"
+echo "Batch size: $BATCH_SIZE, num_samples: $NUM_SAMPLES, max_examples: $MAX_EXAMPLES, max_turns: $MAX_TURNS"
 echo "----------------------------------------------------------------"
 
 CMD=(
@@ -68,6 +69,7 @@ CMD=(
     --batch-size "$BATCH_SIZE"
     --num-samples "$NUM_SAMPLES"
     --max-examples "$MAX_EXAMPLES"
+    --max-turns "$MAX_TURNS"
     --max-tokens "$MAX_TOKENS"
     --temperature "$TEMPERATURE"
     --log-dir "$TINKER_EVAL_LOG_DIR"

@@ -7,8 +7,9 @@ set -euo pipefail
 #   export TINKER_API_KEY=...
 #
 # Common overrides:
-#   MODEL_NAME, DATA_PATH, BATCH_SIZE, ROLLOUT_N, MAX_STEPS,
+#   MODEL_NAME, DATA_PATH, BATCH_SIZE, ROLLOUT_N, MAX_STEPS, MAX_TURNS,
 #   MAX_TOKENS, TEMPERATURE, LR, LORA_RANK, RENDERER_NAME, TINKER_BASE_URL
+#   SHUFFLE_SEED
 
 export PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
@@ -36,8 +37,10 @@ MODEL_NAME="${MODEL_NAME:-Qwen/Qwen3-8B}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 ROLLOUT_N="${ROLLOUT_N:-2}"
 MAX_STEPS="${MAX_STEPS:-1}"
+MAX_TURNS="${MAX_TURNS:-0}"
 MAX_TOKENS="${MAX_TOKENS:-512}"
 TEMPERATURE="${TEMPERATURE:-1.0}"
+SHUFFLE_SEED="${SHUFFLE_SEED:--1}"
 LR="${LR:-1e-5}"
 LORA_RANK="${LORA_RANK:-32}"
 RENDERER_NAME="${RENDERER_NAME:-}"
@@ -52,7 +55,10 @@ if [ -n "$RENDERER_NAME" ]; then
     echo "Renderer: $RENDERER_NAME"
 fi
 echo "Python: $PYTHON_BIN"
-echo "Batch size: $BATCH_SIZE, rollout_n: $ROLLOUT_N, max_steps: $MAX_STEPS"
+echo "Batch size: $BATCH_SIZE, rollout_n: $ROLLOUT_N, max_steps: $MAX_STEPS, max_turns: $MAX_TURNS"
+if [ "$SHUFFLE_SEED" -ge 0 ]; then
+    echo "Shuffle seed: $SHUFFLE_SEED"
+fi
 echo "----------------------------------------------------------------"
 
 CMD=(
@@ -63,8 +69,10 @@ CMD=(
     --batch-size "$BATCH_SIZE"
     --rollout-n "$ROLLOUT_N"
     --max-steps "$MAX_STEPS"
+    --max-turns "$MAX_TURNS"
     --max-tokens "$MAX_TOKENS"
     --temperature "$TEMPERATURE"
+    --shuffle-seed "$SHUFFLE_SEED"
     --learning-rate "$LR"
     --lora-rank "$LORA_RANK"
     --log-dir "$TINKER_LOG_DIR"

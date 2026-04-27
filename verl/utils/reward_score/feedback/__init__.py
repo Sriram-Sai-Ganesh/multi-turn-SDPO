@@ -2,6 +2,7 @@ from verl.utils.reward_score.feedback import math
 from verl.utils.reward_score.feedback import code
 from verl.utils.reward_score.feedback import gpqa
 from verl.utils.reward_score.feedback import mcq
+from verl.utils.reward_score.feedback import sharded_multiturn
 from verl.utils.reward_score.feedback import tooluse
 
 
@@ -21,6 +22,8 @@ def compute_score(
         results = mcq.compute_score(solution_str, ground_truth)
     elif data_source in ["tooluse"]:
         results = tooluse.compute_score(solution_str, ground_truth)
+    elif data_source in ["sharded_multiturn"]:
+        results = sharded_multiturn.compute_score(solution_str, ground_truth, extra_info)
     else:
         raise ValueError(f"Reward style {data_source} not found.")
     return results
