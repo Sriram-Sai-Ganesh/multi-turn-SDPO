@@ -1,0 +1,65 @@
+[
+  {
+    "idx": "sharded-GSM8K/346",
+    "dataset": "sharded_multiturn",
+    "kind": "number",
+    "source_task": "math",
+    "prompt": "how many cookies does Jenny eat each week?",
+    "shards": [
+      "Jenny buys one bag of cookies every week.",
+      "each bag contains 36 cookies.",
+      "Jenny puts 4 cookies in her son's lunchbox.",
+      "she makes a lunchbox 5 days a week.",
+      "her husband eats one cookie every day.",
+      "the husband eats cookies even on the weekend",
+      "Jenny eats whatever cookies are left over after this."
+    ],
+    "answer": "The son gets 4 cookies a day for 5 days so he eats 4*5 = <<4*5=20>>20 cookies\nHer husband eats 1 cookie a day for 7 days so he eats 1*7 = <<1*7=7>>7 cookies\nThere are 36 cookies in a bag and her son eats 20 and her husband eats 7 so Jenny eats 36-20-7 = <<36-20-7=9>>9 cookies\n#### 9",
+    "full_prompt": "Jenny buys 1 bag of cookies a week.  The bag has 36 cookies and she puts 4 cookies in her son's lunch box 5 days a week.  Her husband eats 1 cookie a day for 7 days.  Jenny eats the rest of the cookies.  How many cookies does Jenny eat?"
+  },
+  {
+    "idx": "sharded-GSM8K/40",
+    "dataset": "sharded_multiturn",
+    "kind": "number",
+    "source_task": "math",
+    "prompt": "how old is Brandon's iPhone?",
+    "shards": [
+      "Brandon's iPhone is 4 times older than Ben's iPhone.",
+      "Ben's iPhone is twice as old as Suzy's iPhone.",
+      "Suzy's iPhone is 1 year old."
+    ],
+    "answer": "Ben\u2019s iPhone is 1*2 = <<1*2=2>>2 years old.\nBrandon\u2019s iPhone is 4*2 = <<4*2=8>>8 years old.\n#### 8",
+    "full_prompt": "Brandon's iPhone is four times as old as Ben's iPhone. Ben's iPhone is two times older than Suzy's iPhone. If Suzy\u2019s iPhone is 1 year old, how old is Brandon\u2019s iPhone?"
+  },
+  {
+    "idx": "sharded-GSM8K/1166",
+    "dataset": "sharded_multiturn",
+    "kind": "number",
+    "source_task": "math",
+    "prompt": "how many fruits does an avocado tree produce over 10 years?",
+    "shards": [
+      "a 5-year-old avocado tree produces 50 fruits normally",
+      "when the tree is 6 years old, it produces 3 times the initial 5-year amount",
+      "at age 7, it starts producing 7 times the 5-year-old amount",
+      "for an 8-year-old tree, it produces 200 fewer fruits than a 10-year-old tree",
+      "in its ninth year, the tree doesn't produce any fruit at all",
+      "finally, a 10-year-old tree will produce 20 times the 5-year-old amount"
+    ],
+    "answer": "At 5 years it produces 50 fruits\nAt 6 years it produces 50 * 3 = <<50*3=150>>150 fruits.\nAt 7 years, it produces 50 * 7 = <<50*7=350>>350 fruits\nAt 10 years, it produces 50 * 20 = <<50*20=1000>>1000 fruits\nAt 8 years, it produces 200 fewer fruits than at 10 years, so it produces 1000 - 200 = 800 fruits\nDuring 10 years, an avocado tree can produce a total of 50 + 150 + 350 + 800 + 1000 = <<50+150+350+800+1000=2350>>2350 fruits\n#### 2350",
+    "full_prompt": "Generally, a 5-year-old avocado tree produces 50 fruits, a 6-year-old one produces 3 times the initial amount of fruits, a 7-year-old one produces 7 times the initial amount, and an 8-year-old produces 200 fruits less than a 10-year-old one. During the ninth year, the avocado tree doesn't produce any fruit, and then a 10-year-old tree produces 20 times the initial amount of fruits. How many total fruits can an avocado tree produce during its 10 years of life?"
+  },
+  {
+    "idx": "sharded-GSM8K/215",
+    "dataset": "sharded_multiturn",
+    "kind": "number",
+    "source_task": "math",
+    "prompt": "how many hours does Lori need to work to afford her purchase?",
+    "shards": [
+      "Lori plans to purchase a pair of shoes worth $320.00.",
+      "She also wants to get a matching belt priced at $32.00.",
+      "Lori earns $8.00 per hour from her part-time job."
+    ],
+    "answer": "She wants to buy a pair of shoes for $320.00 and a belt for $32.00 for a total of 320+32 = $<<320+32=352.00>>352.00\nHer purchase will total $352.00 and she makes $8.00 at her part-time job so she'll have to work 352/8 = <<352/8=44>>44 hours\n#### 44",
+    "full_prompt": "Lori wants to buy a $320.00 pair of shoes and a matching belt that is $32.00.  Her part-time job pays her $8.00 an hour.  How many hours will she have to work before she can make her purchase?"
+  }
+]

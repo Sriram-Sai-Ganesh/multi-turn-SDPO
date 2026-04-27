@@ -1,0 +1,26 @@
+[
+  {
+    "idx": "sharded-smoke-addition",
+    "dataset": "sharded_multiturn",
+    "kind": "number",
+    "prompt": "A user wants the sum of two hidden numbers. The request is underspecified. Ask for the missing numbers before answering.",
+    "shards": [
+      "The first number is 2.",
+      "The second number is 3."
+    ],
+    "answer": "5",
+    "full_prompt": "Add 2 and 3."
+  },
+  {
+    "idx": "sharded-smoke-color",
+    "dataset": "sharded_multiturn",
+    "kind": "exact",
+    "prompt": "A user wants a two-word label, but both words are hidden. Ask for the missing words before answering.",
+    "shards": [
+      "The first word is ocean.",
+      "The second word is blue."
+    ],
+    "answer": "ocean blue",
+    "full_prompt": "Return the label ocean blue."
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "idx": "sharded-smoke-multiply",
+    "dataset": "sharded_multiturn",
+    "kind": "number",
+    "prompt": "A user wants the product of two hidden numbers. The request is underspecified. Ask for the missing numbers before answering.",
+    "shards": [
+      "The first number is 4.",
+      "The second number is 6."
+    ],
+    "answer": "24",
+    "full_prompt": "Multiply 4 by 6."
+  }
+]
