@@ -8,8 +8,8 @@ set -euo pipefail
 #
 # Common overrides:
 #   MODEL_NAME, DATA_PATH, BATCH_SIZE, ROLLOUT_N, MAX_STEPS, MAX_TURNS,
-#   MAX_TOKENS, TEMPERATURE, LR, LORA_RANK, RENDERER_NAME, TINKER_BASE_URL
-#   SHUFFLE_SEED
+#   MAX_TOKENS, TEMPERATURE, LR, LORA_RANK, RENDERER_NAME, TINKER_BASE_URL,
+#   SHUFFLE_SEED, SHARDED_REWARD_MODE
 
 export PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
@@ -41,6 +41,7 @@ MAX_TURNS="${MAX_TURNS:-0}"
 MAX_TOKENS="${MAX_TOKENS:-512}"
 TEMPERATURE="${TEMPERATURE:-1.0}"
 SHUFFLE_SEED="${SHUFFLE_SEED:--1}"
+SHARDED_REWARD_MODE="${SHARDED_REWARD_MODE:-sparse}"
 LR="${LR:-1e-5}"
 LORA_RANK="${LORA_RANK:-32}"
 RENDERER_NAME="${RENDERER_NAME:-}"
@@ -56,6 +57,7 @@ if [ -n "$RENDERER_NAME" ]; then
 fi
 echo "Python: $PYTHON_BIN"
 echo "Batch size: $BATCH_SIZE, rollout_n: $ROLLOUT_N, max_steps: $MAX_STEPS, max_turns: $MAX_TURNS"
+echo "Sharded reward mode: $SHARDED_REWARD_MODE"
 if [ "$SHUFFLE_SEED" -ge 0 ]; then
     echo "Shuffle seed: $SHUFFLE_SEED"
 fi
@@ -73,6 +75,7 @@ CMD=(
     --max-tokens "$MAX_TOKENS"
     --temperature "$TEMPERATURE"
     --shuffle-seed "$SHUFFLE_SEED"
+    --sharded-reward-mode "$SHARDED_REWARD_MODE"
     --learning-rate "$LR"
     --lora-rank "$LORA_RANK"
     --log-dir "$TINKER_LOG_DIR"

@@ -1,4 +1,5 @@
 from scripts.sharded_multiturn import (
+    DENSE_CLARIFICATION_REWARD,
     SampledResponse,
     ShardedTask,
     contains_environment_impersonation,
@@ -6,7 +7,11 @@ from scripts.sharded_multiturn import (
     run_sharded_interaction,
     score_final_answer,
     score_sharded_response,
+    score_sharded_turn,
+    rollout_training_reward,
+    rollout_training_rewards,
 )
+from scripts.tinker_grpo import centered_turn_advantages
 from scripts.tinker_grpo import load_feedback_module, row_to_messages, score_response
 
 
@@ -63,8 +68,10 @@ def test_run_sharded_interaction_reveals_shards_until_final():
     rollout = run_sharded_interaction(task, lambda _messages: SampledResponse(text=next(responses)))
 
     assert rollout.reward == 1.0
+    assert rollout.dense_reward == (DENSE_CLARIFICATION_REWARD + DENSE_CLARIFICATION_REWARD + 1.0) / 3
     assert rollout.revealed_shards == 2
     assert len(rollout.turns) == 3
+    assert [score["dense_action"] for score in rollout.turn_scores] == ["clarify", "clarify", "final_answer"]
     assert rollout.transcript[-1]["content"] == "<final>3</final>"
 
 
@@ -144,3 +151,87 @@ def test_local_reward_module_handles_sharded_multiturn_rows():
 
     assert impersonation_score["score"] == 0.0
     assert impersonation_score["incorrect_format"] == 1
+
+
+def test_dense_turn_scoring_rewards_clarification_and_penalizes_premature_final():
+    task = ShardedTask(
+        task_id="x",
+        prompt="Add hidden numbers.",
+        shards=["First is 1.", "Second is 2."],
+        answer="3",
+        kind="number",
+        full_prompt="Add 1 and 2.",
+    )
+
+    clarify_score = score_sharded_turn("What is the first number?", task, revealed_shards_before_turn=0)
+    premature_score = score_sharded_turn("<final>3</final>", task, revealed_shards_before_turn=1)
+    final_score = score_sharded_turn("<final>3</final>", task, revealed_shards_before_turn=2)
+
+    assert clarify_score["score"] == DENSE_CLARIFICATION_REWARD
+    assert clarify_score["dense_action"] == "clarify"
+    assert premature_score["score"] == 0.0
+    assert premature_score["premature_final"] == 1
+    assert "privileged full instruction" in premature_score["feedback"].lower()
+    assert final_score["score"] == 1.0
+    assert final_score["dense_action"] == "final_answer"
+
+
+def test_dense_turn_scoring_rejects_final_tagged_clarifications():
+    task = ShardedTask(
+        task_id="x",
+        prompt="Add hidden numbers.",
+        shards=["First is 1."],
+        answer="1",
+        kind="number",
+    )
+
+    score = score_sharded_turn("<final>What is the first number?</final>", task, 0)
+
+    assert score["score"] == 0.0
+    assert score["incorrect_format"] == 1
+    assert score["dense_action"] == "malformed_final_markup"
+
+
+def test_rollout_training_rewards_support_sparse_and_dense_modes():
+    task = ShardedTask(
+        task_id="x",
+        prompt="Add hidden numbers.",
+        shards=["First is 1.", "Second is 2."],
+        answer="3",
+        kind="number",
+    )
+    responses = iter(["What is the first number?", "What is the second number?", "<final>3</final>"])
+    rollout = run_sharded_interaction(task, lambda _messages: SampledResponse(text=next(responses)))
+
+    assert rollout_training_rewards(rollout, "sparse") == [1.0, 1.0, 1.0]
+    assert rollout_training_rewards(rollout, "dense") == [
+        DENSE_CLARIFICATION_REWARD,
+        DENSE_CLARIFICATION_REWARD,
+        1.0,
+    ]
+    assert rollout_training_reward(rollout, "rlrf") == rollout.dense_reward
+
+
+def test_centered_turn_advantages_aligns_rollouts_by_turn_index():
+    advantages = centered_turn_advantages([[0.25, 1.0], [0.0], [0.25, 0.0]])
+
+    assert advantages == [[0.08333333333333334, 0.5], [-0.16666666666666666], [0.08333333333333334, -0.5]]
+
+
+def test_local_reward_module_supports_dense_turn_context():
+    sharded_multiturn = load_feedback_module("sharded_multiturn")
+
+    score = sharded_multiturn.compute_score(
+        "What hidden number should I use?",
+        "3",
+        {
+            "sharded_reward_mode": "dense",
+            "reward_kind": "number",
+            "problem": "Add hidden numbers.",
+            "shards": ["First is 1.", "Second is 2."],
+            "revealed_shards_before_turn": 0,
+        },
+    )
+
+    assert score["score"] == DENSE_CLARIFICATION_REWARD
+    assert score["dense_action"] == "clarify"

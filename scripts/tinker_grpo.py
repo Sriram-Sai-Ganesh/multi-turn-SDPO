@@ -24,7 +24,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.sharded_multiturn import SampledResponse, ShardedTask, run_sharded_interaction
+from scripts.sharded_multiturn import (
+    SPARSE_REWARD_MODE,
+    SampledResponse,
+    ShardedTask,
+    normalize_reward_mode,
+    rollout_training_reward,
+    rollout_training_rewards,
+    run_sharded_interaction,
+)
 
 
 def load_json_records(path: Path) -> list[dict[str, Any]]:
@@ -142,6 +150,19 @@ def mean(values: list[float]) -> float:
     return sum(values) / max(len(values), 1)
 
 
+def centered_turn_advantages(turn_reward_groups: list[list[float]]) -> list[list[float]]:
+    """Center dense rewards by turn index within one prompt's rollout group."""
+    max_turns = max((len(rewards) for rewards in turn_reward_groups), default=0)
+    turn_means: list[float] = []
+    for turn_idx in range(max_turns):
+        rewards_at_turn = [rewards[turn_idx] for rewards in turn_reward_groups if turn_idx < len(rewards)]
+        turn_means.append(mean(rewards_at_turn))
+    return [
+        [reward - turn_means[turn_idx] for turn_idx, reward in enumerate(rewards)]
+        for rewards in turn_reward_groups
+    ]
+
+
 def write_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -224,6 +245,11 @@ def parse_args() -> argparse.Namespace:
         default=int(os.environ.get("SHUFFLE_SEED", "-1")),
         help="Shuffle training rows before selecting max_steps * batch_size rows; negative disables shuffling.",
     )
+    parser.add_argument(
+        "--sharded-reward-mode",
+        default=os.environ.get("SHARDED_REWARD_MODE", SPARSE_REWARD_MODE),
+        help="Reward mode for sharded_multiturn training: sparse or dense/rlrf.",
+    )
     parser.add_argument("--learning-rate", type=float, default=float(os.environ.get("LR", "1e-5")))
     parser.add_argument("--lora-rank", type=int, default=int(os.environ.get("LORA_RANK", "32")))
     parser.add_argument("--save-every", type=int, default=int(os.environ.get("SAVE_EVERY", "0")))
@@ -234,6 +260,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = parse_args()
+    args.sharded_reward_mode = normalize_reward_mode(args.sharded_reward_mode)
 
     split_file = resolve_split_file(args.data_path, args.split)
     rows = load_json_records(split_file)
@@ -247,7 +274,12 @@ def main() -> None:
     if args.dry_run:
         first_messages = row_to_messages(rows[0])
         LOGGER.info("Dry run prompt roles: %s", [msg["role"] for msg in first_messages])
-        LOGGER.info("Dry run dataset=%s model=%s", rows[0].get("dataset"), args.model_name)
+        LOGGER.info(
+            "Dry run dataset=%s model=%s sharded_reward_mode=%s",
+            rows[0].get("dataset"),
+            args.model_name,
+            args.sharded_reward_mode,
+        )
         return
 
     if not os.environ.get("TINKER_API_KEY"):
@@ -288,7 +320,12 @@ def main() -> None:
             eps=1e-8,
         )
 
-        LOGGER.info("Using Tinker model=%s renderer=%s", args.model_name, renderer_name)
+        LOGGER.info(
+            "Using Tinker model=%s renderer=%s sharded_reward_mode=%s",
+            args.model_name,
+            renderer_name,
+            args.sharded_reward_mode,
+        )
         service_client = tinker.ServiceClient(base_url=args.base_url)
         training_client = service_client.create_lora_training_client(
             base_model=args.model_name,
@@ -346,7 +383,8 @@ def main() -> None:
                 for row in batch_rows:
                     task = ShardedTask.from_row(row)
                     rollouts = []
-                    rewards: list[float] = []
+                    rollout_rewards: list[float] = []
+                    turn_reward_groups: list[list[float]] = []
                     for rollout_idx in range(args.rollout_n):
                         def sample_fn(messages: list[dict[str, str]]) -> SampledResponse:
                             prompt = renderer.build_generation_prompt(messages)
@@ -375,7 +413,9 @@ def main() -> None:
                             max_turns=args.max_turns if args.max_turns > 0 else None,
                         )
                         rollouts.append(rollout)
-                        rewards.append(rollout.reward)
+                        turn_rewards = rollout_training_rewards(rollout, args.sharded_reward_mode)
+                        rollout_rewards.append(rollout_training_reward(rollout, args.sharded_reward_mode))
+                        turn_reward_groups.append(turn_rewards)
                         record = rollout.to_log_record()
                         record.update(
                             {
@@ -383,15 +423,24 @@ def main() -> None:
                                 "idx": row.get("idx"),
                                 "dataset": row.get("dataset"),
                                 "rollout_idx": rollout_idx,
+                                "training_reward": rollout_rewards[-1],
+                                "training_turn_rewards": turn_rewards,
+                                "sharded_reward_mode": args.sharded_reward_mode,
                             }
                         )
                         write_jsonl(samples_path, record)
 
-                    reward_mean = mean(rewards)
-                    advantages = [reward - reward_mean for reward in rewards]
+                    reward_mean = mean(rollout_rewards)
                     group_rewards.append(reward_mean)
-                    for rollout, advantage in zip(rollouts, advantages):
-                        for turn in rollout.turns:
+                    if args.sharded_reward_mode == SPARSE_REWARD_MODE:
+                        advantages = [
+                            [reward - reward_mean for _turn in rollout.turns]
+                            for rollout, reward in zip(rollouts, rollout_rewards)
+                        ]
+                    else:
+                        advantages = centered_turn_advantages(turn_reward_groups)
+                    for rollout, rollout_advantages in zip(rollouts, advantages):
+                        for turn, advantage in zip(rollout.turns, rollout_advantages):
                             if add_training_datum(
                                 datums,
                                 turn.prompt,

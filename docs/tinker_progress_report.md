@@ -26,6 +26,12 @@ on Tinker without breaking the existing local/JHU `verl` path. That gives us a
 baseline harness and enough operational confidence to run sparse-GRPO
 comparisons before adding dense-feedback logic.
 
+Update after sparse baselines: the first dense/RLRF-style reward mode is now
+implemented as an opt-in sharded Tinker training mode. It is not full SDPO
+logit self-distillation yet; it is the rule-based dense feedback layer needed
+to test whether rewarding information-seeking behavior reduces premature final
+answers.
+
 ## Code Changes So Far
 
 Tinker support was added as a separate path from the existing local/JHU `verl`
@@ -467,9 +473,10 @@ The current work is not yet the final project method.
 
 Remaining gaps:
 
-- the sharded multi-turn conversation environment is wired into Tinker, but has
-  only been smoke-tested and needs a real sparse-GRPO pilot;
-- no dense RLRF/self-critic reward has been implemented;
+- dense RLRF-style reward shaping is implemented, but the dense checkpoint
+  has not yet been run/evaluated on Tinker;
+- full SDPO-style logit self-distillation from feedback has not been
+  implemented;
 - no CURIO-style curiosity baseline has been run;
 - no model-scale sweep has been run;
 - no OOD evaluation has been run;
@@ -617,10 +624,20 @@ Remaining gaps:
 
 4. Implement dense-feedback/RLRF.
 
-   Once sparse GRPO baselines are stable, add the teacher/self-critic signal
-   conditioned on the `full_prompt` field as privileged information. The output
-   should be a denser reward signal than terminal correctness, so we can compare
-   convergence and sample efficiency against sparse GRPO.
+   Implemented first pass:
+
+   - `SHARDED_REWARD_MODE=sparse` remains the default sparse terminal baseline.
+   - `SHARDED_REWARD_MODE=dense` or `rlrf` enables per-turn dense rewards.
+   - clarification while hidden shards remain gets partial positive reward;
+   - premature final answers before all hidden shards are revealed get zero
+     dense reward with explicit feedback;
+   - final answers after all shards are revealed use the existing exact/numeric
+     scorer;
+   - dense advantages are centered by turn index within each rollout group.
+
+   The next run should train a dense checkpoint on
+   `datasets/sharded_multiturn/lost_math_200` and evaluate it with the same
+   sparse held-out accuracy metric used for the base and sparse-GRPO baselines.
 
 5. Run a minimal local/JHU smoke test.
 

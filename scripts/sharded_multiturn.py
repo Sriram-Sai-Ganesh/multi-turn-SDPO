@@ -45,15 +45,31 @@ NUMBER_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
 CLARIFYING_PREFIXES = (
     "clarify",
     "please provide",
+    "provide",
     "could you provide",
     "can you provide",
+    "please tell",
+    "could you tell",
+    "can you tell",
+    "tell me",
+    "share",
     "what are",
     "what is",
     "which",
     "please specify",
     "i need",
     "i need more",
+    "i do not have enough",
+    "i don't have enough",
+    "more information",
 )
+FINAL_MARKUP_RE = re.compile(
+    r"<\s*/?\s*(?:final|final[-_]answer|answer)\b|^\s*(?:final answer|answer)\s*:",
+    re.IGNORECASE | re.MULTILINE,
+)
+SPARSE_REWARD_MODE = "sparse"
+DENSE_REWARD_MODE = "dense"
+DENSE_CLARIFICATION_REWARD = 0.25
 
 
 @dataclass(frozen=True)
@@ -119,10 +135,17 @@ class MultiturnRollout:
     score: dict[str, Any]
     revealed_shards: int
     transcript: list[dict[str, str]]
+    turn_scores: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def reward(self) -> float:
         return float(self.score.get("score", 0.0))
+
+    @property
+    def dense_reward(self) -> float:
+        if not self.turn_scores:
+            return self.reward
+        return sum(float(score.get("score", 0.0)) for score in self.turn_scores) / len(self.turn_scores)
 
     @property
     def final_response(self) -> str:
@@ -135,8 +158,10 @@ class MultiturnRollout:
             "task_id": self.task.task_id,
             "reward": self.reward,
             "score": self.score,
+            "dense_reward": self.dense_reward,
             "revealed_shards": self.revealed_shards,
             "turns": len(self.turns),
+            "turn_scores": self.turn_scores,
             "final_response": self.final_response,
             "transcript": self.transcript,
         }
@@ -243,6 +268,10 @@ def is_clarifying_text(value: str) -> bool:
     return normalized.startswith(CLARIFYING_PREFIXES)
 
 
+def contains_final_answer_markup(response: str) -> bool:
+    return FINAL_MARKUP_RE.search(response) is not None
+
+
 def is_placeholder_final_text(value: str) -> bool:
     normalized = value.strip().lower()
     if not normalized:
@@ -320,6 +349,133 @@ def score_sharded_response(response: str, task: ShardedTask) -> dict[str, Any]:
     return score_final_answer(extract_final_answer(response), task.answer, task.kind)
 
 
+def normalize_reward_mode(mode: str | None) -> str:
+    normalized = (mode or SPARSE_REWARD_MODE).strip().lower().replace("-", "_")
+    if normalized in {SPARSE_REWARD_MODE, "terminal", "final", "baseline"}:
+        return SPARSE_REWARD_MODE
+    if normalized in {DENSE_REWARD_MODE, "rlrf", "rich_feedback", "turn", "turn_level"}:
+        return DENSE_REWARD_MODE
+    raise ValueError(f"Unsupported sharded reward mode: {mode!r}")
+
+
+def score_sharded_turn(response: str, task: ShardedTask, revealed_shards_before_turn: int) -> dict[str, Any]:
+    """Return the dense teacher/rubric score for one assistant turn.
+
+    The rubric uses privileged knowledge of the hidden shard schedule. It does
+    not reveal hidden content to the policy; it only distinguishes information
+    seeking from premature final-answer behavior.
+    """
+    total_shards = len(task.shards)
+    if contains_environment_impersonation(response):
+        score = _environment_impersonation_score()
+        score.update({"dense_action": "environment_impersonation", "revealed_shards": revealed_shards_before_turn})
+        return score
+
+    prediction = extract_final_answer(response)
+    if prediction is not None:
+        if revealed_shards_before_turn < total_shards:
+            missing = total_shards - revealed_shards_before_turn
+            feedback_prefix = "The privileged full instruction still has hidden details." if task.full_prompt else "Hidden details remain."
+            return {
+                "score": 0.0,
+                "acc": 0.0,
+                "pred": prediction,
+                "incorrect_format": 0,
+                "premature_final": 1,
+                "dense_action": "premature_final",
+                "revealed_shards": revealed_shards_before_turn,
+                "missing_shards": missing,
+                "feedback": f"{feedback_prefix} Ask for more information before giving a final answer.",
+            }
+        final_score = score_final_answer(prediction, task.answer, task.kind)
+        final_score.update(
+            {
+                "premature_final": 0,
+                "dense_action": "final_answer",
+                "revealed_shards": revealed_shards_before_turn,
+                "missing_shards": 0,
+            }
+        )
+        return final_score
+
+    if contains_final_answer_markup(response):
+        return {
+            "score": 0.0,
+            "acc": 0.0,
+            "pred": None,
+            "incorrect_format": 1,
+            "premature_final": 0,
+            "dense_action": "malformed_final_markup",
+            "revealed_shards": revealed_shards_before_turn,
+            "missing_shards": max(total_shards - revealed_shards_before_turn, 0),
+            "feedback": "Do not put clarifying questions or placeholders inside final-answer tags.",
+        }
+
+    if revealed_shards_before_turn < total_shards:
+        if is_clarifying_text(response):
+            return {
+                "score": DENSE_CLARIFICATION_REWARD,
+                "acc": 0.0,
+                "pred": None,
+                "incorrect_format": 0,
+                "premature_final": 0,
+                "dense_action": "clarify",
+                "revealed_shards": revealed_shards_before_turn,
+                "missing_shards": total_shards - revealed_shards_before_turn,
+                "feedback": "Good: ask for missing information before answering.",
+            }
+        return {
+            "score": 0.0,
+            "acc": 0.0,
+            "pred": None,
+            "incorrect_format": 0,
+            "premature_final": 0,
+            "dense_action": "non_clarifying",
+            "revealed_shards": revealed_shards_before_turn,
+            "missing_shards": total_shards - revealed_shards_before_turn,
+            "feedback": "Hidden details remain; ask a concise clarifying question.",
+        }
+
+    return {
+        "score": 0.0,
+        "acc": 0.0,
+        "pred": None,
+        "incorrect_format": 1,
+        "premature_final": 0,
+        "dense_action": "missing_final_after_all_shards",
+        "revealed_shards": revealed_shards_before_turn,
+        "missing_shards": 0,
+        "feedback": "All hidden details have been revealed; provide the final answer in XML tags.",
+    }
+
+
+def rollout_training_rewards(rollout: MultiturnRollout, reward_mode: str | None) -> list[float]:
+    mode = normalize_reward_mode(reward_mode)
+    if mode == SPARSE_REWARD_MODE:
+        return [rollout.reward for _turn in rollout.turns]
+    if len(rollout.turn_scores) == len(rollout.turns):
+        return [float(score.get("score", 0.0)) for score in rollout.turn_scores]
+    return [
+        float(score_sharded_turn(turn.response, rollout.task, _revealed_before_turn(rollout, index)).get("score", 0.0))
+        for index, turn in enumerate(rollout.turns)
+    ]
+
+
+def rollout_training_reward(rollout: MultiturnRollout, reward_mode: str | None) -> float:
+    rewards = rollout_training_rewards(rollout, reward_mode)
+    if not rewards:
+        return 0.0
+    return sum(rewards) / len(rewards)
+
+
+def _revealed_before_turn(rollout: MultiturnRollout, turn_index: int) -> int:
+    revealed = 0
+    for message in rollout.turns[turn_index].prompt_messages:
+        if message.get("role") == "user" and message.get("content") != rollout.task.prompt:
+            revealed += 1
+    return min(revealed, len(rollout.task.shards))
+
+
 def _coerce_sample(sample: str | SampledResponse) -> SampledResponse:
     if isinstance(sample, SampledResponse):
         return sample
@@ -333,11 +489,13 @@ def run_sharded_interaction(
 ) -> MultiturnRollout:
     messages = initial_messages(task)
     turns: list[AssistantTurn] = []
+    turn_scores: list[dict[str, Any]] = []
     revealed_shards = 0
     max_turns = max_turns or max(len(task.shards) + 1, 1)
 
     for turn_idx in range(max_turns):
         prompt_messages = [dict(message) for message in messages]
+        revealed_before_turn = revealed_shards
         sample = _coerce_sample(sample_fn(prompt_messages))
         turns.append(
             AssistantTurn(
@@ -349,6 +507,7 @@ def run_sharded_interaction(
                 prompt=sample.prompt,
             )
         )
+        turn_scores.append(score_sharded_turn(sample.text, task, revealed_before_turn))
         messages.append({"role": "assistant", "content": sample.text})
         if contains_environment_impersonation(sample.text):
             break
@@ -376,4 +535,5 @@ def run_sharded_interaction(
         score=score,
         revealed_shards=revealed_shards,
         transcript=messages,
+        turn_scores=turn_scores,
     )

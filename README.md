@@ -281,6 +281,17 @@ shard after each non-final turn, and applies terminal sparse reward to the
 assistant turns in that trajectory. See `docs/sharded_multiturn.md` for the row
 format and smoke commands.
 
+For the dense-feedback final-project pilot, keep sparse reward as the baseline
+and opt into per-turn RLRF-style reward shaping:
+
+```bash
+SHARDED_REWARD_MODE=dense ./run_tinker_grpo.sh lost-math-dense-run
+```
+
+Dense mode rewards clarification while hidden shards remain, penalizes
+premature final answers, and still evaluates final answers with the same held-out
+sparse accuracy metric.
+
 ---
 
 ### Configuration

@@ -144,6 +144,79 @@ the model asks for missing information, the environment reveals shards across
 turns, the model answers after receiving all shards, and the scorer accepts the
 final answer.
 
+## Dense RLRF-Style Reward Mode
+
+The final-project proposal asks whether richer feedback can improve the
+multi-turn information-gathering behavior that sparse terminal reward fails to
+teach reliably. This follows the SDPO/RLRF framing from Hübotter et al., where
+feedback supplies denser credit assignment than a single scalar outcome, and it
+targets the Laban et al. failure mode where models make early assumptions and
+prematurely answer in sharded conversations.
+
+The Tinker trainer therefore supports an opt-in dense sharded reward mode:
+
+```bash
+SHARDED_REWARD_MODE=dense ./run_tinker_grpo.sh my-dense-run
+```
+
+Aliases accepted by the runner: `dense`, `rlrf`, `rich_feedback`, `turn`, and
+`turn_level`. The default remains `sparse`, so all existing base and sparse-GRPO
+baseline commands stay reproducible.
+
+Dense mode uses the hidden shard schedule as privileged teacher context. It
+does not reveal hidden content to the policy. Instead, each assistant turn gets
+a training score:
+
+- `0.25` for a clarifying/information-seeking turn while hidden shards remain;
+- `0.0` for a premature final answer before all hidden shards are revealed;
+- `0.0` for malformed final-answer tags or assistant-authored hidden-detail
+  messages;
+- normal final-answer accuracy once all hidden shards have been revealed.
+
+For GRPO advantage construction, dense mode centers rewards by turn index within
+each rollout group. This means turn-0 clarification attempts are compared
+against other turn-0 attempts, final-answer attempts are compared against other
+final-answer attempts, and premature short trajectories can be penalized without
+assigning the same terminal score to every earlier turn.
+
+This is an RLRF-style reward-shaping implementation, not the full SDPO logit
+self-distillation objective. The logs include per-turn feedback and
+`dense_reward`, so the same environment can later feed an SDPO reprompting or
+self-teacher implementation that conditions on `full_prompt`.
+
+Dense Lost Math pilot command:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
+RENDERER_NAME=qwen3_disable_thinking \
+SHARDED_REWARD_MODE=dense \
+SHUFFLE_SEED=7 \
+MAX_STEPS=30 \
+BATCH_SIZE=1 \
+ROLLOUT_N=4 \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+./run_tinker_grpo.sh lost-math-103-dense-rlrf-shuffle7-30
+```
+
+Evaluate dense checkpoints with the normal sparse held-out accuracy metric:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
+SPLIT=test \
+MODEL_PATH='tinker://.../sampler_weights/lost-math-103-dense-rlrf-shuffle7-30-final-sampler' \
+MODEL_NAME=Qwen/Qwen3-8B \
+RENDERER_NAME=qwen3_disable_thinking \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+TEMPERATURE=0.0 \
+BATCH_SIZE=1 \
+NUM_SAMPLES=1 \
+./run_tinker_eval.sh lost-math-103-dense-rlrf-shuffle7-30-eval
+```
+
 ## Local/JHU Preprocessing
 
 The standard parquet preprocessing path accepts the same JSON schema:
