@@ -670,8 +670,24 @@ Remaining gaps:
    - dense eval: `5/10`, matching base Qwen and beating sparse GRPO's `4/10`;
    - dense fixed the sparse-regressed `sharded-GSM8K/1027` example.
 
-   Next dense work should test whether this can become a real accuracy gain by
-   either running a longer/larger dense pilot or adding SDPO-style
+   Completed 60-step dense pilot:
+
+   - run: `lost-math-103-dense-rlrf-shuffle7-60`
+   - train rows used: `60`
+   - optimizer steps with nonzero advantages: `40/60`
+   - skipped zero-advantage steps: `20/60`
+   - assistant-turn datums used for nonzero-advantage updates: `268`
+   - mean dense training reward across steps: `0.2446`
+   - first-half mean dense training reward: `0.2443`
+   - second-half mean dense training reward: `0.2449`
+   - checkpoint eval: `5/10`, format errors `2/10`
+   - comparison to dense 30-step and base: same `5` successes and same `5`
+     failures
+   - comparison to sparse GRPO: still fixes the sparse-regressed
+     `sharded-GSM8K/1027` example
+
+   The 60-step result suggests that simply scaling this exact dense reward is
+   not enough. Next dense work should either tune the rubric or add SDPO-style
    self-distillation from the dense feedback traces.
 
 5. Run a minimal local/JHU smoke test.

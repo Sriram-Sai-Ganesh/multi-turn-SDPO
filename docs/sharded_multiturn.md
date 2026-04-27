@@ -669,6 +669,7 @@ Observed eval:
 | Base Qwen3 unlabeled | `5/10` | `50.0%` | `2/10` |
 | Sparse GRPO 30-step | `4/10` | `40.0%` | `2/10` |
 | Dense RLRF 30-step | `5/10` | `50.0%` | `2/10` |
+| Dense RLRF 60-step | `5/10` | `50.0%` | `2/10` |
 
 Example-level comparison:
 
@@ -737,3 +738,58 @@ sparse GRPO (`24/30` nonzero steps versus `10/30`) and removes the one held-out
 regression caused by sparse GRPO's premature answer. It does not yet improve
 held-out accuracy over base on this small 10-row test split, so it should be
 treated as a promising but not yet successful final-project method.
+
+Observed dense/RLRF 60-step pilot:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
+RENDERER_NAME=qwen3_disable_thinking \
+SHARDED_REWARD_MODE=dense \
+SHUFFLE_SEED=7 \
+MAX_STEPS=60 \
+BATCH_SIZE=1 \
+ROLLOUT_N=4 \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+./run_tinker_grpo.sh lost-math-103-dense-rlrf-shuffle7-60
+```
+
+- train rows used: `60`
+- optimizer steps with nonzero advantages: `40/60`
+- skipped zero-advantage steps: `20/60`
+- assistant-turn datums used for nonzero-advantage updates: `268`
+- mean dense training reward across steps: `0.2446`
+- first-half mean dense training reward: `0.2443`
+- second-half mean dense training reward: `0.2449`
+- final sampler checkpoint:
+  `tinker://a73b0798-2115-5250-b8b2-b92c0145eaab:train:0/sampler_weights/lost-math-103-dense-rlrf-shuffle7-60-final-sampler`
+
+Dense 60-step checkpoint eval:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
+SPLIT=test \
+MODEL_PATH='tinker://a73b0798-2115-5250-b8b2-b92c0145eaab:train:0/sampler_weights/lost-math-103-dense-rlrf-shuffle7-60-final-sampler' \
+MODEL_NAME=Qwen/Qwen3-8B \
+RENDERER_NAME=qwen3_disable_thinking \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+TEMPERATURE=0.0 \
+BATCH_SIZE=1 \
+NUM_SAMPLES=1 \
+./run_tinker_eval.sh lost-math-103-dense-rlrf-shuffle7-60-eval
+```
+
+- reward: `5/10 = 50.0%`
+- format errors: `2/10 = 20.0%`
+- comparison to dense 30-step: same `5` successes and same `5` failures
+- comparison to base: same `5` successes and same `5` failures
+- comparison to sparse GRPO: still fixes the sparse regression on
+  `sharded-GSM8K/1027`
+
+Interpretation: scaling the same dense rubric from 30 to 60 steps preserved the
+sparse-regression fix but did not improve held-out accuracy. The training reward
+was flat across the first and second halves, so the next project step should not
+be merely running more of this exact objective.
