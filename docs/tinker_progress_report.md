@@ -467,7 +467,8 @@ The current work is not yet the final project method.
 
 Remaining gaps:
 
-- no sharded multi-turn conversation environment is wired into Tinker yet;
+- the sharded multi-turn conversation environment is wired into Tinker, but has
+  only been smoke-tested and needs a real sparse-GRPO pilot;
 - no dense RLRF/self-critic reward has been implemented;
 - no CURIO-style curiosity baseline has been run;
 - no model-scale sweep has been run;
@@ -476,31 +477,150 @@ Remaining gaps:
 
 ## Next Steps
 
-1. Decide whether to implement concise-answer prompting before
-   more sparse-GRPO runs.
+1. Run base eval on the converted Lost in Conversation math pilot.
 
-   Chemistry shows that cleaner format alone does not guarantee accuracy gains.
-   A concise prompt may reduce variance and make sparse reward less noisy.
+   The new pilot lives at `datasets/sharded_multiturn/lost_math` with `36`
+   train and `4` test rows converted from `microsoft/lost_in_conversation`.
 
-2. Add a concise-answer mode for SciKnowEval.
+2. Run a short sparse-GRPO smoke on the same pilot.
 
-   The current system prompt encourages reasoning and XML output. Many failures
-   are still truncation. A prompt variant that asks for brief reasoning plus
-   `<answer>` may reduce format errors without changing the reward function.
+   Start small because examples have up to `11` hidden shards, so one rollout
+   can require many Tinker sample calls.
 
-3. Wire the sharded multi-turn dataset.
+   Completed first smoke:
 
-   The final-project dataset needs turns, hidden shards, and an environment that
-   reveals shards only when the model asks useful clarifying questions. This is
-   the real bridge from single-turn RLVR-style tasks to the final multi-turn
-   research question.
+   - base eval: `2/4 = 50.0%`, format errors `1/4`
+   - GRPO smoke train: `7/20 = 35.0%`, mixed groups `2/5`
+   - GRPO smoke checkpoint eval: `2/4 = 50.0%`, logged format errors `1/4`
+   - sample-level comparison: `1` improved, `1` regressed, `1` unchanged
+     correct, `1` unchanged wrong
+   - final sampler checkpoint:
+     `tinker://80b32044-f890-542a-acab-d61bdd131d0e:train:0/sampler_weights/lost-math-grpo-smoke-final-sampler`
+
+   Interpretation: the smoke checkpoint did not beat the base aggregate. It
+   did reveal a real failure mode where the model invented an
+   `Additional information ...` shard itself and answered from that
+   hallucinated fact. The sharded scorer now treats assistant-authored
+   `Additional information` messages as invalid format before larger runs, so
+   the same regressed sample would now be counted as a format error. A local
+   rescore of the saved JSONL samples keeps reward at `2/4` and increases
+   format errors from `1/4` to `2/4`.
+
+   Completed guarded smoke:
+
+   - GRPO guarded smoke train: `11/20 = 55.0%`
+   - format errors: `7/20 = 35.0%`
+   - environment-impersonation failures: `0/20`
+   - mixed groups: `2/5`
+   - logged checkpoint eval: `1/4 = 25.0%`, format errors `3/4`
+   - checkpoint eval after local rescore with corrected `<answer>...</answer>`
+     parsing: `2/4 = 50.0%`, format errors `2/4`
+   - checkpoint eval environment-impersonation trajectories: `1/4`
+   - final sampler checkpoint:
+     `tinker://b1a02fc0-91ed-508d-82bc-d0a0f42d08e4:train:0/sampler_weights/lost-math-grpo-guard-smoke-final-sampler`
+
+   Completed user-detail prompt smoke:
+
+   - base eval with revised prompt: `2/4 = 50.0%`, format errors `0/4`
+   - GRPO user-detail smoke train: `9/20 = 45.0%`
+   - format errors: `7/20 = 35.0%`
+   - environment-impersonation failures: `4/20`, all in one train group
+   - mixed groups: `2/5`
+   - final sampler checkpoint:
+     `tinker://00149cfc-aace-5243-9622-99496d3d317b:train:0/sampler_weights/lost-math-grpo-user-detail-smoke-final-sampler`
+
+   Interpretation: the revised prompt fixed held-out base formatting, but the
+   explicit `User-provided detail ...` label is still copyable. The sharded
+   environment now emits unlabeled hidden-shard messages while retaining the
+   guard for both old labeled phrasings.
+
+   Completed unlabeled shard smoke:
+
+   - base eval with unlabeled shards: `2/4 = 50.0%`, format errors `0/4`
+   - GRPO unlabeled smoke train: `12/20 = 60.0%`
+   - format errors: `4/20 = 20.0%`
+   - environment-impersonation failures: `0/20`
+   - mixed groups: `0/5`
+   - final sampler checkpoint:
+     `tinker://72709eee-9d32-57a3-8701-327e9c143824:train:0/sampler_weights/lost-math-grpo-unlabeled-smoke-final-sampler`
+
+   Interpretation: this is the cleanest sharded environment so far, but the
+   smoke had no mixed groups and all Tinker losses were zero. It should be
+   treated as a no-op train run, not as learned improvement. The runner now
+   skips zero-advantage samples so future no-op runs are obvious in the logs,
+   and it supports `SHUFFLE_SEED` to sample a different training slice without
+   regenerating data.
+
+   Completed shuffled unlabeled sparse-GRPO smoke:
+
+   - run: `lost-math-grpo-unlabeled-shuffle7-10`
+   - train rows used: `10`
+   - rewarded rollouts: `16/40 = 40.0%`
+   - format errors: `12/40 = 30.0%`
+   - environment-impersonation failures: `0/40`
+   - mixed groups: `6/10`
+   - optimizer steps with nonzero advantages: `6/10`
+   - skipped zero-advantage steps: `4/10`
+   - checkpoint eval: `2/4 = 50.0%`, format errors `0/4`
+   - comparison to base: same two successes and same two failures
+   - final sampler checkpoint:
+     `tinker://b7977a46-7133-5ee8-ab83-d5cc679f5754:train:0/sampler_weights/lost-math-grpo-unlabeled-shuffle7-10-final-sampler`
+
+   Interpretation: this is the first clean sharded Lost Math sparse-GRPO run
+   that is worth evaluating. It preserves zero environment-impersonation
+   failures and has enough mixed reward groups for real updates. Held-out eval
+   ties the clean base rather than improving it; the remaining failure mode is
+   premature final answers before enough hidden shards are revealed.
+
+   Scaled Lost Math split prepared:
+
+   - output: `datasets/sharded_multiturn/lost_math_200`
+   - cap requested: `--max-records 200`
+   - convertible math rows available from cached source: `103`
+   - train/test: `93/10`
+   - reward kind: `number`
+   - hidden shards per row: `3` to `11`, mean `4.68`
+   - local parquet preprocessing: passed
+   - Tinker dry runs for train and eval launchers: passed
+   - scaled base eval: `5/10 = 50.0%`, format errors `2/10`
+   - clean 30-step scaled sparse-GRPO pilot: `53/120 = 44.2%` rewarded
+     rollouts from terminal logs
+   - optimizer steps with nonzero advantages: `10/30`
+   - skipped zero-advantage steps: `20/30`
+   - assistant-turn datums used for nonzero-advantage updates: `212`
+   - checkpoint eval: `4/10 = 40.0%`, format errors `2/10`
+   - comparison to base: `0` improved, `1` regressed, `4` unchanged correct,
+     `5` unchanged wrong
+   - final sampler checkpoint from completed run:
+     `tinker://0e50e3c3-b7ea-5d28-9016-194b29aedb57:train:0/sampler_weights/lost-math-103-grpo-unlabeled-shuffle7-30-final-sampler`
+
+   A second same-name run was accidentally launched before the first finished,
+   so the local JSONL training logs for `lost-math-103-grpo-unlabeled-shuffle7-30`
+   are interleaved and should not be used for aggregate analysis. The runner now
+   creates a run lock to prevent concurrent duplicate run names.
+
+   Interpretation: the scaled sparse-GRPO checkpoint regresses held-out
+   accuracy relative to base (`40%` versus `50%`) without improving format
+   validity. The one regressed example is a premature final answer: base waited
+   for enough hidden shards and answered correctly, while the GRPO checkpoint
+   answered too early. This is useful negative evidence for the project because
+   it shows the sparse terminal baseline does not solve the core multi-turn
+   information-gathering problem.
+
+3. Scale the Lost in Conversation conversion if reward signal is usable.
+
+   The next sparse-GRPO run should use `datasets/sharded_multiturn/lost_math_200`
+   with the unlabeled shard environment. Start with a base eval on the 10-row
+   test split, then run a 30-step shuffled sparse-GRPO pilot and evaluate its
+   final sampler checkpoint if the run has mixed reward groups and nonzero
+   updates.
 
 4. Implement dense-feedback/RLRF.
 
    Once sparse GRPO baselines are stable, add the teacher/self-critic signal
-   conditioned on privileged/full task information. The output should be a
-   denser reward signal than terminal correctness, so we can compare convergence
-   and sample efficiency against sparse GRPO.
+   conditioned on the `full_prompt` field as privileged information. The output
+   should be a denser reward signal than terminal correctness, so we can compare
+   convergence and sample efficiency against sparse GRPO.
 
 5. Run a minimal local/JHU smoke test.
 

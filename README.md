@@ -274,6 +274,13 @@ The Tinker runners live in `scripts/tinker_grpo.py` and `scripts/tinker_eval.py`
 and reuse this repo's JSON datasets plus `verl.utils.reward_score.feedback`
 reward functions.
 
+For the final-project multi-turn task, rows with
+`"dataset": "sharded_multiturn"` are treated as sharded underspecified
+conversations. The runner samples multiple assistant turns, reveals one hidden
+shard after each non-final turn, and applies terminal sparse reward to the
+assistant turns in that trajectory. See `docs/sharded_multiturn.md` for the row
+format and smoke commands.
+
 ---
 
 ### Configuration

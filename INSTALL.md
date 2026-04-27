@@ -107,6 +107,10 @@ MODEL_PATH=tinker://.../sampler_weights/... ./run_tinker_eval.sh tinker-checkpoi
 The eval launcher expects sampler weights. If given a `/weights/` training
 checkpoint, it exports temporary sampler weights first.
 
+The same Tinker launchers also support the final-project sharded multi-turn
+format via rows with `"dataset": "sharded_multiturn"`. See
+`docs/sharded_multiturn.md` for the JSON schema and smoke commands.
+
 # Verification
 To verify the installation, you can run the tests:
 
