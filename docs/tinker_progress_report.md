@@ -863,6 +863,33 @@ Remaining gaps:
    it preserves the project-specific sparse-regression fix, but it is still not
    a held-out accuracy win over base.
 
+   Completed generated-target SDPO 30-step training:
+
+   - run: `lost-math-103-sdpo-generated-w01-shuffle7-30`
+   - settings: `SDPO_TOPK=0`, `SDPO_DISTILL_WEIGHT=0.1`,
+     `SDPO_SKIP_FIRST_N_TOKENS=3`
+   - train rows used: `30`
+   - optimizer steps with trainable signal: `25/30`
+   - skipped constant-signal steps: `5/30` (`1`, `4`, `10`, `13`, `27`)
+   - dense/GRPO assistant-turn datums used: `175`
+   - generated-target SDPO distillation datums used: `71`
+   - steps with any SDPO distillation signal: `22/30`
+   - steps with any dense/GRPO signal: `19/30`
+   - SDPO-only optimizer steps: `6` (`12`, `14`, `15`, `16`, `21`, `24`)
+   - mean training reward across steps: `0.2401`
+   - first-half mean training reward: `0.2536`
+   - second-half mean training reward: `0.2267`
+   - summed generated-target SDPO loss scale: `479.4`, compared with `143.1`
+     for conservative top-k SDPO
+   - final sampler checkpoint:
+     `tinker://7f65e995-9f35-52a8-84b2-f0d5add82f19:train:0/sampler_weights/lost-math-103-sdpo-generated-w01-shuffle7-30-final-sampler`
+
+   Interpretation: generated-target SDPO exercised the distillation path about
+   as often as conservative top-k SDPO, but its CE loss was larger and the
+   training reward declined in the second half. Evaluate this checkpoint before
+   deciding whether generated-target CE is a useful fallback or simply noisier
+   than top-k soft targets.
+
 6. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or

@@ -402,6 +402,57 @@ conservative SDPO setting is now behaviorally tied with dense reward shaping:
 it preserves the project-specific sparse-regression fix, but it is still not a
 held-out accuracy win over base.
 
+Generated-target SDPO ablation:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
+RENDERER_NAME=qwen3_disable_thinking \
+SHARDED_REWARD_MODE=sdpo \
+SDPO_TOPK=0 \
+SDPO_DISTILL_WEIGHT=0.1 \
+SHUFFLE_SEED=7 \
+MAX_STEPS=30 \
+BATCH_SIZE=1 \
+ROLLOUT_N=4 \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+./run_tinker_grpo.sh lost-math-103-sdpo-generated-w01-shuffle7-30
+```
+
+Observed generated-target SDPO 30-step training:
+
+- run: `lost-math-103-sdpo-generated-w01-shuffle7-30`
+- settings: `SDPO_TOPK=0`, `SDPO_DISTILL_WEIGHT=0.1`
+- train rows used: `30`
+- optimizer steps with trainable signal: `25/30`
+- skipped constant-signal steps: `5/30` (`1`, `4`, `10`, `13`, `27`)
+- dense/GRPO assistant-turn datums used: `175`
+- generated-target SDPO distillation datums used: `71`
+- steps with SDPO distillation signal: `22/30`
+- mean training reward across steps: `0.2401`
+- summed generated-target SDPO loss scale: `479.4`, compared with `143.1`
+  for conservative top-k SDPO
+- final sampler checkpoint:
+  `tinker://7f65e995-9f35-52a8-84b2-f0d5add82f19:train:0/sampler_weights/lost-math-103-sdpo-generated-w01-shuffle7-30-final-sampler`
+
+Evaluate the generated-target checkpoint with:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
+SPLIT=test \
+MODEL_PATH='tinker://7f65e995-9f35-52a8-84b2-f0d5add82f19:train:0/sampler_weights/lost-math-103-sdpo-generated-w01-shuffle7-30-final-sampler' \
+MODEL_NAME=Qwen/Qwen3-8B \
+RENDERER_NAME=qwen3_disable_thinking \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+TEMPERATURE=0.0 \
+BATCH_SIZE=1 \
+NUM_SAMPLES=1 \
+./run_tinker_eval.sh lost-math-103-sdpo-generated-w01-shuffle7-30-eval
+```
+
 ## Local/JHU Preprocessing
 
 The standard parquet preprocessing path accepts the same JSON schema:
