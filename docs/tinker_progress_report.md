@@ -763,6 +763,43 @@ Remaining gaps:
    checkpoint and then run a 30-step SDPO pilot if the checkpoint eval does not
    show a severe regression.
 
+   Completed SDPO top-k smoke eval:
+
+   - run: `lost-math-103-sdpo-topk-shuffle7-smoke-eval`
+   - reward: `4/10 = 40.0%`
+   - format errors: `2/10 = 20.0%`
+   - comparison to base and dense 30/60-step checkpoints: `-1/10`
+   - comparison to sparse GRPO 30-step checkpoint: tied at `4/10`
+
+   Interpretation: the 5-step SDPO smoke did not improve held-out accuracy, but
+   it also did not show a catastrophic failure. It was reasonable to proceed to
+   the 30-step pilot.
+
+   Completed SDPO top-k 30-step training:
+
+   - run: `lost-math-103-sdpo-topk-shuffle7-30`
+   - train rows used: `30`
+   - optimizer steps with trainable signal: `27/30`
+   - skipped constant-signal steps: `3/30` (`4`, `10`, `27`)
+   - dense/GRPO assistant-turn datums used: `184`
+   - SDPO top-k distillation datums used: `66`
+   - SDPO top-k token positions used: `3487`
+   - steps with any SDPO distillation signal: `22/30`
+   - steps with any dense/GRPO signal: `23/30`
+   - SDPO-only optimizer steps: `4` (`14`, `18`, `19`, `24`)
+   - mean training reward across steps: `0.2462`
+   - first-half mean training reward: `0.2508`
+   - second-half mean training reward: `0.2416`
+   - telemetry warning: one non-fatal Tinker telemetry connection failure at
+     step `20`; training continued and saved the final checkpoints
+   - final sampler checkpoint:
+     `tinker://3a2b98dd-8862-5190-934c-66ba227dacc5:train:0/sampler_weights/lost-math-103-sdpo-topk-shuffle7-30-final-sampler`
+
+   Interpretation: the 30-step SDPO run has substantially denser trainable
+   signal than sparse GRPO and denser token-level signal than scalar dense
+   shaping. The training reward curve itself is roughly flat, so the held-out
+   eval is necessary before claiming improvement.
+
 6. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or

@@ -277,6 +277,19 @@ the log field `teacher_response` is intentionally empty because the teacher is
 not sampled for text; it is teacher-forced over the student's sampled turn and
 used for soft next-token targets.
 
+Observed SDPO top-k smoke eval:
+
+- run: `lost-math-103-sdpo-topk-shuffle7-smoke-eval`
+- checkpoint:
+  `tinker://eee8cb04-5b63-54ce-8138-917dac3ea139:train:0/sampler_weights/lost-math-103-sdpo-topk-shuffle7-smoke-final-sampler`
+- reward: `4/10 = 40.0%`
+- format errors: `2/10 = 20.0%`
+
+The smoke checkpoint tied the sparse-GRPO 30-step baseline and trailed base
+Qwen plus dense 30/60-step checkpoints by `1/10`. This is acceptable for a
+smoke because the purpose was to validate the combined objective, not to measure
+learning.
+
 Pilot command:
 
 ```bash
@@ -293,6 +306,23 @@ MAX_TURNS=0 \
 MAX_TOKENS=256 \
 ./run_tinker_grpo.sh lost-math-103-sdpo-topk-shuffle7-30
 ```
+
+Observed SDPO top-k 30-step training:
+
+- train rows used: `30`
+- optimizer steps with trainable signal: `27/30`
+- skipped constant-signal steps: `3/30`
+- dense/GRPO assistant-turn datums used: `184`
+- SDPO top-k distillation datums used: `66`
+- SDPO top-k token positions used: `3487`
+- steps with SDPO distillation signal: `22/30`
+- mean training reward across steps: `0.2462`
+- final sampler checkpoint:
+  `tinker://3a2b98dd-8862-5190-934c-66ba227dacc5:train:0/sampler_weights/lost-math-103-sdpo-topk-shuffle7-30-final-sampler`
+
+The 30-step run completed despite one non-fatal telemetry connection warning.
+The warning did not stop training, and both final Tinker state and sampler
+checkpoints were saved.
 
 Evaluate the resulting sampler checkpoint with the same sparse held-out metric:
 
