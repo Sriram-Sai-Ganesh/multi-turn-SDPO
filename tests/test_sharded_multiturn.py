@@ -1,6 +1,8 @@
 from scripts.sharded_multiturn import (
     DENSE_CLARIFICATION_REWARD,
     BRIEF_UNDERSPECIFIED_PREFIX,
+    ENHANCED_TEACHER_PROMPT_STYLE,
+    MINIMAL_TEACHER_PROMPT_STYLE,
     SDPO_REWARD_MODE,
     SampledResponse,
     ShardedTask,
@@ -17,6 +19,7 @@ from scripts.sharded_multiturn import (
     rollout_training_reward,
     rollout_training_rewards,
     select_sdpo_distillation_turn,
+    system_prompt_for_task,
 )
 from scripts.tinker_grpo import centered_turn_advantages
 from scripts.tinker_grpo import load_feedback_module, row_to_messages, score_response
@@ -54,11 +57,12 @@ def test_sharded_task_row_to_messages_uses_default_system():
 
     messages = row_to_messages(row)
 
-    assert messages[0]["role"] == "system"
-    assert messages[1] == {"role": "user", "content": "Add hidden numbers."}
+    task = ShardedTask.from_row(row)
+    assert messages[0] == {"role": "system", "content": system_prompt_for_task(task)}
+    assert messages[1] == {"role": "user", "content": "Q: Add hidden numbers.\nA:"}
 
 
-def test_minimal_prompt_style_uses_question_only_and_plain_shards():
+def test_minimal_prompt_style_uses_minimal_system_and_plain_shards():
     task = ShardedTask(
         task_id="x",
         prompt="Add hidden numbers.",
@@ -67,22 +71,26 @@ def test_minimal_prompt_style_uses_question_only_and_plain_shards():
         kind="number",
     )
 
-    assert initial_messages(task, prompt_style="minimal") == [{"role": "user", "content": "Add hidden numbers."}]
+    assert initial_messages(task, prompt_style="minimal") == [
+        {"role": "system", "content": "As an expert problem solver solve step by step the following mathematical question."},
+        {"role": "user", "content": "Q: Add hidden numbers.\nA:"},
+    ]
     assert shard_message("First is 1.", 0, 1, prompt_style="minimal") == "First is 1."
 
 
-def test_linc_math_prompt_style_matches_upstream_math_shape():
+def test_linc_math_prompt_style_uses_minimal_math_prompt_shape():
     task = ShardedTask(
         task_id="x",
         prompt="How many apples are left?",
         shards=["There were 5 apples."],
         answer="5",
         kind="number",
+        metadata={"source_task": "math"},
     )
 
     messages = initial_messages(task, prompt_style="linc_math")
 
-    assert messages[0]["content"].startswith("As an expert problem solver")
+    assert messages[0]["content"] == "As an expert problem solver solve step by step the following mathematical question."
     assert messages[1] == {"role": "user", "content": "Q: How many apples are left?\nA:"}
 
 
@@ -290,7 +298,7 @@ def test_select_sdpo_distillation_turn_picks_first_bad_failed_turn():
     assert select_sdpo_distillation_turn(successful, "failed") is None
 
 
-def test_build_sdpo_teacher_messages_uses_privileged_context_without_mutating_rollout():
+def test_build_sdpo_teacher_messages_defaults_to_minimal_teacher_without_privileged_context():
     task = ShardedTask(
         task_id="x",
         prompt="Add hidden numbers.",
@@ -307,6 +315,34 @@ def test_build_sdpo_teacher_messages_uses_privileged_context_without_mutating_ro
         rollout,
         0,
         successful_previous_attempt="<final>3</final>",
+    )
+
+    assert rollout.transcript == original_transcript
+    assert messages is not rollout.turns[0].prompt_messages
+    assert messages[1:] == rollout.turns[0].prompt_messages[1:]
+    assert messages[0]["content"].endswith(
+        "There is a chance that the problem is underspecified. Either beforehand or during the problem solving process, ask clarifying questions for any potentially missing information."
+    )
+
+
+def test_build_sdpo_teacher_messages_enhanced_uses_privileged_context_without_mutating_rollout():
+    task = ShardedTask(
+        task_id="x",
+        prompt="Add hidden numbers.",
+        shards=["First is 1.", "Second is 2."],
+        answer="3",
+        kind="number",
+        full_prompt="Add 1 and 2.",
+    )
+    responses = iter(["<final>1</final>"])
+    rollout = run_sharded_interaction(task, lambda _messages: SampledResponse(text=next(responses)))
+    original_transcript = list(rollout.transcript)
+
+    messages = build_sdpo_teacher_messages(
+        rollout,
+        0,
+        successful_previous_attempt="<final>3</final>",
+        teacher_prompt_style=ENHANCED_TEACHER_PROMPT_STYLE,
     )
 
     assert rollout.transcript == original_transcript
@@ -333,9 +369,17 @@ def test_build_sdpo_teacher_messages_supports_brief_prompt_style():
     messages = build_sdpo_teacher_messages(rollout, 0, teacher_prompt_style="brief")
     joined = "\n".join(message["content"] for message in messages)
 
+    assert messages[0]["content"].endswith(
+        "There is a chance that the problem is underspecified. Either beforehand or during the problem solving process, ask clarifying questions for any potentially missing information."
+    )
     assert BRIEF_UNDERSPECIFIED_PREFIX in joined
     assert "Return only the next assistant message." in joined
     assert "feedback-conditioned self-teacher" not in joined
+
+
+def test_teacher_prompt_style_constants_match_new_defaults():
+    assert MINIMAL_TEACHER_PROMPT_STYLE == "minimal_teacher"
+    assert ENHANCED_TEACHER_PROMPT_STYLE == "enhanced"
 
 
 def test_centered_turn_advantages_aligns_rollouts_by_turn_index():
