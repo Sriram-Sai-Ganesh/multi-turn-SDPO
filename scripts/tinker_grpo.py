@@ -267,7 +267,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sdpo-distill-weight",
         type=float,
-        default=float(os.environ.get("SDPO_DISTILL_WEIGHT", "1.0")),
+        default=float(os.environ.get("SDPO_DISTILL_WEIGHT", "0.1")),
         help="Cross-entropy token weight for Tinker SDPO-style self-teacher targets.",
     )
     parser.add_argument(
@@ -279,7 +279,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sdpo-skip-first-n-tokens",
         type=int,
-        default=int(os.environ.get("SDPO_SKIP_FIRST_N_TOKENS", "0")),
+        default=int(os.environ.get("SDPO_SKIP_FIRST_N_TOKENS", "3")),
         help="Skip this many sampled response tokens when applying top-k SDPO CE.",
     )
     parser.add_argument(

@@ -725,7 +725,7 @@ Remaining gaps:
    exposes top-k CE targets rather than the full-logit KL path used in
    `verl/trainer/ppo/core_algos.py`.
 
-   Suggested smoke:
+   Suggested conservative smoke after the first top-k run:
 
    ```bash
    PYTHON_BIN=.venv/bin/python \
@@ -733,13 +733,15 @@ Remaining gaps:
    RENDERER_NAME=qwen3_disable_thinking \
    SHARDED_REWARD_MODE=sdpo \
    SDPO_TOPK=20 \
+   SDPO_DISTILL_WEIGHT=0.1 \
+   SDPO_SKIP_FIRST_N_TOKENS=3 \
    SHUFFLE_SEED=7 \
    MAX_STEPS=5 \
    BATCH_SIZE=1 \
    ROLLOUT_N=4 \
    MAX_TURNS=0 \
    MAX_TOKENS=256 \
-   ./run_tinker_grpo.sh lost-math-103-sdpo-topk-shuffle7-smoke
+   ./run_tinker_grpo.sh lost-math-103-sdpo-topk-w01-skip3-shuffle7-smoke
    ```
 
    Completed SDPO top-k smoke:
@@ -799,6 +801,23 @@ Remaining gaps:
    signal than sparse GRPO and denser token-level signal than scalar dense
    shaping. The training reward curve itself is roughly flat, so the held-out
    eval is necessary before claiming improvement.
+
+   Completed SDPO top-k 30-step eval:
+
+   - run: `lost-math-103-sdpo-topk-shuffle7-30-eval`
+   - reward: `4/10 = 40.0%`
+   - format errors: `2/10 = 20.0%`
+   - comparison to sparse GRPO: tied at `4/10`
+   - comparison to base and dense 30/60-step checkpoints: `-1/10`
+   - regressed example relative to base/dense: `sharded-GSM8K/1027`
+
+   Interpretation: the first SDPO top-k configuration did not improve held-out
+   accuracy. It regressed the same premature-final-answer example that dense
+   reward shaping had fixed. This points to the distillation term being too
+   strong or too noisy for the 30-row pilot, so future SDPO top-k runs should
+   use the conservative defaults `SDPO_DISTILL_WEIGHT=0.1` and
+   `SDPO_SKIP_FIRST_N_TOKENS=3`, or explicitly ablate the generated-target
+   fallback with `SDPO_TOPK=0`.
 
 6. Run a minimal local/JHU smoke test.
 

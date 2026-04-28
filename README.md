@@ -295,7 +295,8 @@ sparse accuracy metric.
 For the proposal's SDPO-style feedback distillation path on Tinker, use:
 
 ```bash
-SHARDED_REWARD_MODE=sdpo SDPO_TOPK=20 ./run_tinker_grpo.sh lost-math-sdpo-run
+SHARDED_REWARD_MODE=sdpo SDPO_TOPK=20 SDPO_DISTILL_WEIGHT=0.1 \
+SDPO_SKIP_FIRST_N_TOKENS=3 ./run_tinker_grpo.sh lost-math-sdpo-run
 ```
 
 This keeps the dense sharded GRPO signal and adds feedback-conditioned

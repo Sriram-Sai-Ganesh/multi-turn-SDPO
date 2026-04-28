@@ -61,8 +61,8 @@ echo "Python: $PYTHON_BIN"
 echo "Batch size: $BATCH_SIZE, rollout_n: $ROLLOUT_N, max_steps: $MAX_STEPS, max_turns: $MAX_TURNS"
 echo "Sharded reward mode: $SHARDED_REWARD_MODE"
 if [ "$SHARDED_REWARD_MODE" = "sdpo" ]; then
-    echo "SDPO distill weight: ${SDPO_DISTILL_WEIGHT:-1.0}, topk: ${SDPO_TOPK:-20}"
-    echo "SDPO skip first tokens: ${SDPO_SKIP_FIRST_N_TOKENS:-0}, teacher max tokens: ${SDPO_MAX_TEACHER_TOKENS:-256}"
+    echo "SDPO distill weight: ${SDPO_DISTILL_WEIGHT:-0.1}, topk: ${SDPO_TOPK:-20}"
+    echo "SDPO skip first tokens: ${SDPO_SKIP_FIRST_N_TOKENS:-3}, teacher max tokens: ${SDPO_MAX_TEACHER_TOKENS:-256}"
     echo "SDPO teacher temperature: ${SDPO_TEACHER_TEMPERATURE:-0.0}, distill on: ${SDPO_DISTILL_ON:-failed}"
 fi
 if [ "$SHUFFLE_SEED" -ge 0 ]; then

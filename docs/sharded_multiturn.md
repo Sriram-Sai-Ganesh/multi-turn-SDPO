@@ -235,15 +235,17 @@ the closest supported objective:
 - By default, it teacher-forces the student's sampled turn through that teacher
   prompt, requests top-k prompt logprobs from Tinker, and trains the student on
   the original conversation state with `cross_entropy` soft targets.
-- `SDPO_TOPK=20` is the default. Set `SDPO_TOPK=0` to use a cheaper
-  generated-target CE fallback instead of top-k soft targets.
+- `SDPO_TOPK=20`, `SDPO_DISTILL_WEIGHT=0.1`, and
+  `SDPO_SKIP_FIRST_N_TOKENS=3` are the current conservative defaults. Set
+  `SDPO_TOPK=0` to use a cheaper generated-target CE fallback instead of top-k
+  soft targets.
 
 This is SDPO-style feedback distillation for Tinker, not a byte-for-byte copy of
 the local `verl` full-logit KL implementation. The important project distinction
 is preserved: dense/RLRF mode is scalar turn reward shaping; SDPO mode adds a
 feedback-conditioned self-teacher distillation term.
 
-Smoke command:
+Conservative smoke command:
 
 ```bash
 PYTHON_BIN=.venv/bin/python \
@@ -251,13 +253,15 @@ DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
 RENDERER_NAME=qwen3_disable_thinking \
 SHARDED_REWARD_MODE=sdpo \
 SDPO_TOPK=20 \
+SDPO_DISTILL_WEIGHT=0.1 \
+SDPO_SKIP_FIRST_N_TOKENS=3 \
 SHUFFLE_SEED=7 \
 MAX_STEPS=5 \
 BATCH_SIZE=1 \
 ROLLOUT_N=4 \
 MAX_TURNS=0 \
 MAX_TOKENS=256 \
-./run_tinker_grpo.sh lost-math-103-sdpo-topk-shuffle7-smoke
+./run_tinker_grpo.sh lost-math-103-sdpo-topk-w01-skip3-shuffle7-smoke
 ```
 
 Observed SDPO top-k smoke:
@@ -290,7 +294,7 @@ Qwen plus dense 30/60-step checkpoints by `1/10`. This is acceptable for a
 smoke because the purpose was to validate the combined objective, not to measure
 learning.
 
-Pilot command:
+Conservative pilot command:
 
 ```bash
 PYTHON_BIN=.venv/bin/python \
@@ -298,13 +302,15 @@ DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
 RENDERER_NAME=qwen3_disable_thinking \
 SHARDED_REWARD_MODE=sdpo \
 SDPO_TOPK=20 \
+SDPO_DISTILL_WEIGHT=0.1 \
+SDPO_SKIP_FIRST_N_TOKENS=3 \
 SHUFFLE_SEED=7 \
 MAX_STEPS=30 \
 BATCH_SIZE=1 \
 ROLLOUT_N=4 \
 MAX_TURNS=0 \
 MAX_TOKENS=256 \
-./run_tinker_grpo.sh lost-math-103-sdpo-topk-shuffle7-30
+./run_tinker_grpo.sh lost-math-103-sdpo-topk-w01-skip3-shuffle7-30
 ```
 
 Observed SDPO top-k 30-step training:
@@ -323,6 +329,24 @@ Observed SDPO top-k 30-step training:
 The 30-step run completed despite one non-fatal telemetry connection warning.
 The warning did not stop training, and both final Tinker state and sampler
 checkpoints were saved.
+
+Observed SDPO top-k 30-step eval:
+
+- run: `lost-math-103-sdpo-topk-shuffle7-30-eval`
+- checkpoint:
+  `tinker://3a2b98dd-8862-5190-934c-66ba227dacc5:train:0/sampler_weights/lost-math-103-sdpo-topk-shuffle7-30-final-sampler`
+- reward: `4/10 = 40.0%`
+- format errors: `2/10 = 20.0%`
+- comparison to sparse GRPO: tied
+- comparison to base and dense 30/60-step checkpoints: `-1/10`
+- regressed example relative to base/dense: `sharded-GSM8K/1027`
+
+Interpretation: the first SDPO top-k configuration produced strong token-level
+training signal but did not improve held-out accuracy. It also regressed the
+same premature-answer example that dense reward shaping had fixed. Because
+top-k CE loss has many more supervised token positions than scalar GRPO, the
+next run should use a smaller distillation weight and skip the first few forced
+tokens.
 
 Evaluate the resulting sampler checkpoint with the same sparse held-out metric:
 
