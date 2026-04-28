@@ -313,8 +313,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sdpo-teacher-prompt-style",
-        default=os.environ.get("SDPO_TEACHER_PROMPT_STYLE", "default"),
-        help="Feedback teacher prompt style for SDPO: default or brief.",
+        default=os.environ.get("SDPO_TEACHER_PROMPT_STYLE", "minimal_teacher"),
+        help="Feedback teacher prompt style for SDPO: minimal_teacher, enhanced, or brief.",
     )
     parser.add_argument("--learning-rate", type=float, default=float(os.environ.get("LR", "1e-5")))
     parser.add_argument("--lora-rank", type=int, default=int(os.environ.get("LORA_RANK", "32")))
