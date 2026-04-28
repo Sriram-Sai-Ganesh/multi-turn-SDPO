@@ -292,6 +292,17 @@ Dense mode rewards clarification while hidden shards remain, penalizes
 premature final answers, and still evaluates final answers with the same held-out
 sparse accuracy metric.
 
+For the proposal's SDPO-style feedback distillation path on Tinker, use:
+
+```bash
+SHARDED_REWARD_MODE=sdpo SDPO_TOPK=20 ./run_tinker_grpo.sh lost-math-sdpo-run
+```
+
+This keeps the dense sharded GRPO signal and adds feedback-conditioned
+self-teacher distillation. The Tinker implementation uses top-k prompt logprobs
+with `cross_entropy` soft targets because Tinker does not expose the exact
+full-logit KL loss used by the local/JHU `verl` SDPO path.
+
 ---
 
 ### Configuration

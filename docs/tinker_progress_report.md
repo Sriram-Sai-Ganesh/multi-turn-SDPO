@@ -1,6 +1,6 @@
 # Tinker Progress Report
 
-Date: 2026-04-27  
+Date: 2026-04-28
 Branch: `pranav/tinker`
 
 ## Project Objective
@@ -30,6 +30,14 @@ Update after sparse baselines: the first dense/RLRF-style reward mode is
 implemented and has one 30-step Tinker pilot. It is not full SDPO logit
 self-distillation yet; it is the rule-based dense feedback layer needed to test
 whether rewarding information-seeking behavior reduces premature final answers.
+
+Update after reviewing the proposal again: SDPO-style feedback distillation is
+still part of the proposed method. Dense reward shaping alone is not enough. The
+Tinker path now has an opt-in `SHARDED_REWARD_MODE=sdpo` mode that keeps dense
+turn rewards and adds feedback-conditioned self-teacher distillation using
+Tinker's supported top-k prompt logprob + `cross_entropy` soft-target loss.
+This is the closest Tinker-compatible analog of the local/JHU `verl` SDPO path,
+which still contains the full logit-KL implementation.
 
 ## Code Changes So Far
 
@@ -474,8 +482,10 @@ Remaining gaps:
 
 - dense RLRF-style reward shaping is implemented and evaluated once, but has
   not yet beaten base Qwen on held-out accuracy;
-- full SDPO-style logit self-distillation from feedback has not been
-  implemented;
+- Tinker-compatible SDPO-style feedback distillation is implemented but has not
+  yet been run and evaluated end to end;
+- full-logit SDPO remains a local/JHU `verl` capability rather than an exact
+  Tinker loss;
 - no CURIO-style curiosity baseline has been run;
 - no model-scale sweep has been run;
 - no OOD evaluation has been run;
@@ -687,10 +697,52 @@ Remaining gaps:
      `sharded-GSM8K/1027` example
 
    The 60-step result suggests that simply scaling this exact dense reward is
-   not enough. Next dense work should either tune the rubric or add SDPO-style
-   self-distillation from the dense feedback traces.
+   not enough. That is why the next implementation step is SDPO-style
+   self-distillation from the dense feedback traces rather than only more dense
+   scalar-reward training.
 
-5. Run a minimal local/JHU smoke test.
+5. Implement SDPO-style feedback distillation on Tinker.
+
+   Implemented first pass:
+
+   - `SHARDED_REWARD_MODE=sdpo` is now a distinct sharded mode.
+   - It uses the same dense turn rewards and turn-index-centered GRPO
+     advantages as `SHARDED_REWARD_MODE=dense`.
+   - For failed sharded rollouts, it selects the first turn where the dense
+     teacher identified a behavioral mistake.
+   - It builds a feedback-conditioned self-teacher prompt with the fully
+     specified instruction, hidden shard schedule, rubric feedback, and an
+     on-policy successful peer attempt when one exists.
+   - The default Tinker distillation objective teacher-forces the student's
+     sampled response under that teacher prompt, requests `SDPO_TOPK=20`
+     top-k prompt logprobs, and trains the original student prompt with
+     `cross_entropy` soft targets.
+   - `SDPO_TOPK=0` remains available as a generated-target CE fallback.
+
+   This is closer to the proposal and SDPO paper than dense reward shaping
+   because it adds token-level teacher distribution targets. It is still not a
+   byte-for-byte copy of the local/JHU `verl` SDPO objective, because Tinker
+   exposes top-k CE targets rather than the full-logit KL path used in
+   `verl/trainer/ppo/core_algos.py`.
+
+   Suggested smoke:
+
+   ```bash
+   PYTHON_BIN=.venv/bin/python \
+   DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
+   RENDERER_NAME=qwen3_disable_thinking \
+   SHARDED_REWARD_MODE=sdpo \
+   SDPO_TOPK=20 \
+   SHUFFLE_SEED=7 \
+   MAX_STEPS=5 \
+   BATCH_SIZE=1 \
+   ROLLOUT_N=4 \
+   MAX_TURNS=0 \
+   MAX_TOKENS=256 \
+   ./run_tinker_grpo.sh lost-math-103-sdpo-topk-shuffle7-smoke
+   ```
+
+6. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
    depending on this branch broadly, run a short JHU job to confirm the original

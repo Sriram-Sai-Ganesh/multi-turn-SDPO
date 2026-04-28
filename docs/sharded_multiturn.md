@@ -179,10 +179,9 @@ against other turn-0 attempts, final-answer attempts are compared against other
 final-answer attempts, and premature short trajectories can be penalized without
 assigning the same terminal score to every earlier turn.
 
-This is an RLRF-style reward-shaping implementation, not the full SDPO logit
-self-distillation objective. The logs include per-turn feedback and
-`dense_reward`, so the same environment can later feed an SDPO reprompting or
-self-teacher implementation that conditions on `full_prompt`.
+This is an RLRF-style reward-shaping implementation, not the full SDPO
+self-distillation objective. Use it as the dense-reward baseline for comparison
+with the SDPO-style mode below.
 
 Dense Lost Math pilot command:
 
@@ -215,6 +214,84 @@ TEMPERATURE=0.0 \
 BATCH_SIZE=1 \
 NUM_SAMPLES=1 \
 ./run_tinker_eval.sh lost-math-103-dense-rlrf-shuffle7-30-eval
+```
+
+## Tinker SDPO-Style Feedback Distillation
+
+The proposal's method is stronger than dense reward shaping: it calls for an
+on-policy self-teacher with access to the fully specified task to provide dense
+token-level learning signal to the student. The local/JHU `verl` path already
+contains the full SDPO machinery with feedback-conditioned teacher prompts and
+logit KL distillation under `actor.policy_loss.loss_mode=sdpo`.
+
+Tinker does not expose that exact `verl` loss, so the Tinker implementation uses
+the closest supported objective:
+
+- `SHARDED_REWARD_MODE=sdpo` keeps the dense turn rewards and centered
+  turn-level GRPO advantages.
+- For failed sharded rollouts, it builds a feedback-conditioned self-teacher
+  prompt with the fully specified task, hidden shard schedule, rubric feedback,
+  and any successful peer rollout from the same on-policy group.
+- By default, it teacher-forces the student's sampled turn through that teacher
+  prompt, requests top-k prompt logprobs from Tinker, and trains the student on
+  the original conversation state with `cross_entropy` soft targets.
+- `SDPO_TOPK=20` is the default. Set `SDPO_TOPK=0` to use a cheaper
+  generated-target CE fallback instead of top-k soft targets.
+
+This is SDPO-style feedback distillation for Tinker, not a byte-for-byte copy of
+the local `verl` full-logit KL implementation. The important project distinction
+is preserved: dense/RLRF mode is scalar turn reward shaping; SDPO mode adds a
+feedback-conditioned self-teacher distillation term.
+
+Smoke command:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
+RENDERER_NAME=qwen3_disable_thinking \
+SHARDED_REWARD_MODE=sdpo \
+SDPO_TOPK=20 \
+SHUFFLE_SEED=7 \
+MAX_STEPS=5 \
+BATCH_SIZE=1 \
+ROLLOUT_N=4 \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+./run_tinker_grpo.sh lost-math-103-sdpo-topk-shuffle7-smoke
+```
+
+Pilot command:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
+RENDERER_NAME=qwen3_disable_thinking \
+SHARDED_REWARD_MODE=sdpo \
+SDPO_TOPK=20 \
+SHUFFLE_SEED=7 \
+MAX_STEPS=30 \
+BATCH_SIZE=1 \
+ROLLOUT_N=4 \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+./run_tinker_grpo.sh lost-math-103-sdpo-topk-shuffle7-30
+```
+
+Evaluate the resulting sampler checkpoint with the same sparse held-out metric:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
+SPLIT=test \
+MODEL_PATH='tinker://.../sampler_weights/lost-math-103-sdpo-topk-shuffle7-30-final-sampler' \
+MODEL_NAME=Qwen/Qwen3-8B \
+RENDERER_NAME=qwen3_disable_thinking \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+TEMPERATURE=0.0 \
+BATCH_SIZE=1 \
+NUM_SAMPLES=1 \
+./run_tinker_eval.sh lost-math-103-sdpo-topk-shuffle7-30-eval
 ```
 
 ## Local/JHU Preprocessing

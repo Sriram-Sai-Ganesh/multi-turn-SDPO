@@ -4,6 +4,7 @@ from scripts.tinker_eval import is_training_state_path
 from scripts.tinker_grpo import (
     acquire_run_lock,
     extra_info_for_row,
+    first_successful_response,
     ground_truth_for_row,
     load_json_records,
     release_run_lock,
@@ -11,6 +12,12 @@ from scripts.tinker_grpo import (
     score_response,
     shuffle_records,
 )
+
+
+class _Rollout:
+    def __init__(self, reward, final_response):
+        self.reward = reward
+        self.final_response = final_response
 
 
 def test_load_json_records_supports_jsonl(tmp_path):
@@ -37,6 +44,18 @@ def test_shuffle_records_is_deterministic_and_non_mutating():
     assert shuffled_a != rows
     assert rows == [{"idx": i} for i in range(10)]
     assert shuffle_records(rows, seed=-1) is rows
+
+
+def test_first_successful_response_can_exclude_self():
+    rollouts = [
+        _Rollout(1.0, "<final>self</final>"),
+        _Rollout(0.0, "<final>wrong</final>"),
+        _Rollout(1.0, "<final>peer</final>"),
+    ]
+
+    assert first_successful_response(rollouts) == "<final>self</final>"
+    assert first_successful_response(rollouts, exclude_index=0) == "<final>peer</final>"
+    assert first_successful_response([_Rollout(0.0, "")]) is None
 
 
 def test_run_lock_blocks_active_duplicate(tmp_path):

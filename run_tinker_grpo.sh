@@ -9,7 +9,9 @@ set -euo pipefail
 # Common overrides:
 #   MODEL_NAME, DATA_PATH, BATCH_SIZE, ROLLOUT_N, MAX_STEPS, MAX_TURNS,
 #   MAX_TOKENS, TEMPERATURE, LR, LORA_RANK, RENDERER_NAME, TINKER_BASE_URL,
-#   SHUFFLE_SEED, SHARDED_REWARD_MODE
+#   SHUFFLE_SEED, SHARDED_REWARD_MODE, SDPO_DISTILL_WEIGHT, SDPO_TOPK,
+#   SDPO_SKIP_FIRST_N_TOKENS, SDPO_MAX_TEACHER_TOKENS,
+#   SDPO_TEACHER_TEMPERATURE, SDPO_DISTILL_ON
 
 export PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
@@ -58,6 +60,11 @@ fi
 echo "Python: $PYTHON_BIN"
 echo "Batch size: $BATCH_SIZE, rollout_n: $ROLLOUT_N, max_steps: $MAX_STEPS, max_turns: $MAX_TURNS"
 echo "Sharded reward mode: $SHARDED_REWARD_MODE"
+if [ "$SHARDED_REWARD_MODE" = "sdpo" ]; then
+    echo "SDPO distill weight: ${SDPO_DISTILL_WEIGHT:-1.0}, topk: ${SDPO_TOPK:-20}"
+    echo "SDPO skip first tokens: ${SDPO_SKIP_FIRST_N_TOKENS:-0}, teacher max tokens: ${SDPO_MAX_TEACHER_TOKENS:-256}"
+    echo "SDPO teacher temperature: ${SDPO_TEACHER_TEMPERATURE:-0.0}, distill on: ${SDPO_DISTILL_ON:-failed}"
+fi
 if [ "$SHUFFLE_SEED" -ge 0 ]; then
     echo "Shuffle seed: $SHUFFLE_SEED"
 fi

@@ -69,6 +69,7 @@ FINAL_MARKUP_RE = re.compile(
 )
 SPARSE_REWARD_MODE = "sparse"
 DENSE_REWARD_MODE = "dense"
+SDPO_REWARD_MODE = "sdpo"
 DENSE_CLARIFICATION_REWARD = 0.25
 
 
@@ -355,6 +356,8 @@ def normalize_reward_mode(mode: str | None) -> str:
         return SPARSE_REWARD_MODE
     if normalized in {DENSE_REWARD_MODE, "rlrf", "rich_feedback", "turn", "turn_level"}:
         return DENSE_REWARD_MODE
+    if normalized in {SDPO_REWARD_MODE, "self_distill", "self_distillation", "feedback_distill"}:
+        return SDPO_REWARD_MODE
     raise ValueError(f"Unsupported sharded reward mode: {mode!r}")
 
 
@@ -466,6 +469,125 @@ def rollout_training_reward(rollout: MultiturnRollout, reward_mode: str | None) 
     if not rewards:
         return 0.0
     return sum(rewards) / len(rewards)
+
+
+def _is_good_dense_action(score: dict[str, Any]) -> bool:
+    action = str(score.get("dense_action", ""))
+    if action == "clarify":
+        return True
+    if action == "final_answer" and float(score.get("score", 0.0)) >= 1.0:
+        return True
+    return False
+
+
+def select_sdpo_distillation_turn(rollout: MultiturnRollout, distill_on: str = "failed") -> int | None:
+    """Pick one assistant turn whose behavior should receive self-teacher feedback.
+
+    The Tinker SDPO approximation keeps the expensive feedback-conditioned
+    distillation pass bounded by defaulting to one datum per failed rollout.
+    It chooses the first turn where the dense teacher identified a behavioral
+    mistake, such as a premature final answer or a missing final answer after
+    all shards were revealed.
+    """
+    normalized = (distill_on or "failed").strip().lower().replace("-", "_")
+    if normalized in {"none", "off", "false", "0"}:
+        return None
+    if normalized not in {"failed", "all"}:
+        raise ValueError(f"Unsupported SDPO distillation selector: {distill_on!r}")
+    if normalized == "failed" and rollout.reward >= 1.0:
+        return None
+
+    for index, score in enumerate(rollout.turn_scores):
+        if not _is_good_dense_action(score):
+            return index
+    if normalized == "all" and rollout.turns:
+        return len(rollout.turns) - 1
+    if rollout.reward < 1.0 and rollout.turns:
+        return len(rollout.turns) - 1
+    return None
+
+
+def rollout_feedback_summary(rollout: MultiturnRollout, turn_index: int) -> str:
+    if not rollout.turns:
+        return "No assistant response was sampled."
+    turn_index = min(max(turn_index, 0), len(rollout.turns) - 1)
+    turn = rollout.turns[turn_index]
+    score = rollout.turn_scores[turn_index] if turn_index < len(rollout.turn_scores) else {}
+    feedback = str(score.get("feedback") or rollout.score.get("feedback") or "No feedback was provided.")
+    action = str(score.get("dense_action") or "unknown")
+    revealed = int(score.get("revealed_shards", _revealed_before_turn(rollout, turn_index)))
+    missing = max(len(rollout.task.shards) - revealed, 0)
+    return (
+        f"Turn {turn.turn} action: {action}.\n"
+        f"Hidden shards revealed before this turn: {revealed}/{len(rollout.task.shards)}.\n"
+        f"Hidden shards still unavailable to the student before this turn: {missing}.\n"
+        f"Feedback: {feedback}\n"
+        f"Student response on this turn:\n{turn.response}"
+    )
+
+
+def build_sdpo_teacher_messages(
+    rollout: MultiturnRollout,
+    turn_index: int,
+    successful_previous_attempt: str | None = None,
+) -> list[dict[str, str]]:
+    """Build a feedback-conditioned self-teacher prompt for one sharded turn.
+
+    The teacher is allowed to see privileged information, including the fully
+    specified prompt and the rubric feedback. The generated target is later
+    distilled onto the original student prompt for the selected turn, so this
+    helper must not modify the student transcript itself.
+    """
+    turn_index = min(max(turn_index, 0), len(rollout.turns) - 1)
+    turn = rollout.turns[turn_index]
+    revealed = _revealed_before_turn(rollout, turn_index)
+    missing = max(len(rollout.task.shards) - revealed, 0)
+
+    if missing > 0:
+        ideal_behavior = (
+            "The student has not yet received all hidden details. The ideal next "
+            "assistant message should ask one concise clarifying question and must "
+            "not reveal, infer, or use hidden shard content that is unavailable in "
+            "the original conversation."
+        )
+    else:
+        ideal_behavior = (
+            "All hidden details have been revealed in the original conversation. "
+            "The ideal next assistant message should provide the final answer in "
+            "the required XML final-answer format."
+        )
+
+    full_instruction = rollout.task.full_prompt or "(not provided)"
+    shard_lines = "\n".join(f"{idx + 1}. {shard}" for idx, shard in enumerate(rollout.task.shards))
+    demonstration = successful_previous_attempt or "(no successful peer attempt available)"
+    conversation = "\n".join(
+        f"{message.get('role', 'unknown')}: {message.get('content', '')}"
+        for message in turn.prompt_messages
+    )
+    teacher_user = (
+        "You are the feedback-conditioned self-teacher for a sharded multi-turn task.\n"
+        "Use the privileged context and feedback to write the next assistant message "
+        "that the student should have produced from the original conversation state.\n\n"
+        f"Original conversation before the selected assistant turn:\n{conversation}\n\n"
+        f"Fully specified instruction visible only to the teacher:\n{full_instruction}\n\n"
+        f"All hidden shards visible only to the teacher:\n{shard_lines or '(none)'}\n\n"
+        f"Reference final answer visible only to the teacher:\n{rollout.task.answer}\n\n"
+        f"Successful peer attempt, if any:\n{demonstration}\n\n"
+        f"Rubric feedback for the selected turn:\n{rollout_feedback_summary(rollout, turn_index)}\n\n"
+        f"Ideal behavior:\n{ideal_behavior}\n\n"
+        "Return only the replacement assistant message. Do not include analysis "
+        "headers or mention that you saw privileged context."
+    )
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a precise self-teacher for policy distillation. Produce "
+                "only the target assistant message."
+            ),
+        },
+        {"role": "user", "content": teacher_user},
+    ]
 
 
 def _revealed_before_turn(rollout: MultiturnRollout, turn_index: int) -> int:

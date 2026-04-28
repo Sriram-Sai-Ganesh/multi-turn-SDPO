@@ -1,15 +1,19 @@
 from scripts.sharded_multiturn import (
     DENSE_CLARIFICATION_REWARD,
+    SDPO_REWARD_MODE,
     SampledResponse,
     ShardedTask,
+    build_sdpo_teacher_messages,
     contains_environment_impersonation,
     extract_final_answer,
+    normalize_reward_mode,
     run_sharded_interaction,
     score_final_answer,
     score_sharded_response,
     score_sharded_turn,
     rollout_training_reward,
     rollout_training_rewards,
+    select_sdpo_distillation_turn,
 )
 from scripts.tinker_grpo import centered_turn_advantages
 from scripts.tinker_grpo import load_feedback_module, row_to_messages, score_response
@@ -210,6 +214,54 @@ def test_rollout_training_rewards_support_sparse_and_dense_modes():
         1.0,
     ]
     assert rollout_training_reward(rollout, "rlrf") == rollout.dense_reward
+    assert rollout_training_rewards(rollout, "sdpo") == rollout_training_rewards(rollout, "dense")
+    assert normalize_reward_mode("self-distillation") == SDPO_REWARD_MODE
+
+
+def test_select_sdpo_distillation_turn_picks_first_bad_failed_turn():
+    task = ShardedTask(
+        task_id="x",
+        prompt="Add hidden numbers.",
+        shards=["First is 1.", "Second is 2."],
+        answer="3",
+        kind="number",
+    )
+    responses = iter(["<final>1</final>"])
+    rollout = run_sharded_interaction(task, lambda _messages: SampledResponse(text=next(responses)))
+
+    assert select_sdpo_distillation_turn(rollout, "failed") == 0
+
+    successful_responses = iter(["What is the first number?", "What is the second number?", "<final>3</final>"])
+    successful = run_sharded_interaction(task, lambda _messages: SampledResponse(text=next(successful_responses)))
+    assert select_sdpo_distillation_turn(successful, "failed") is None
+
+
+def test_build_sdpo_teacher_messages_uses_privileged_context_without_mutating_rollout():
+    task = ShardedTask(
+        task_id="x",
+        prompt="Add hidden numbers.",
+        shards=["First is 1.", "Second is 2."],
+        answer="3",
+        kind="number",
+        full_prompt="Add 1 and 2.",
+    )
+    responses = iter(["<final>1</final>"])
+    rollout = run_sharded_interaction(task, lambda _messages: SampledResponse(text=next(responses)))
+    original_transcript = list(rollout.transcript)
+
+    messages = build_sdpo_teacher_messages(
+        rollout,
+        0,
+        successful_previous_attempt="<final>3</final>",
+    )
+
+    assert rollout.transcript == original_transcript
+    joined = "\n".join(message["content"] for message in messages)
+    assert "Add 1 and 2." in joined
+    assert "First is 1." in joined
+    assert "Student response on this turn" in joined
+    assert "<final>3</final>" in joined
+    assert "ask one concise clarifying question" in joined
 
 
 def test_centered_turn_advantages_aligns_rollouts_by_turn_index():

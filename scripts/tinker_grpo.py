@@ -25,13 +25,16 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.sharded_multiturn import (
+    SDPO_REWARD_MODE,
     SPARSE_REWARD_MODE,
     SampledResponse,
     ShardedTask,
+    build_sdpo_teacher_messages,
     normalize_reward_mode,
     rollout_training_reward,
     rollout_training_rewards,
     run_sharded_interaction,
+    select_sdpo_distillation_turn,
 )
 
 
@@ -163,6 +166,17 @@ def centered_turn_advantages(turn_reward_groups: list[list[float]]) -> list[list
     ]
 
 
+def first_successful_response(rollouts: list[Any], exclude_index: int | None = None) -> str | None:
+    for index, rollout in enumerate(rollouts):
+        if exclude_index is not None and index == exclude_index:
+            continue
+        if float(getattr(rollout, "reward", 0.0)) >= 1.0:
+            response = str(getattr(rollout, "final_response", "")).strip()
+            if response:
+                return response
+    return None
+
+
 def write_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -248,7 +262,42 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sharded-reward-mode",
         default=os.environ.get("SHARDED_REWARD_MODE", SPARSE_REWARD_MODE),
-        help="Reward mode for sharded_multiturn training: sparse or dense/rlrf.",
+        help="Reward mode for sharded_multiturn training: sparse, dense/rlrf, or sdpo.",
+    )
+    parser.add_argument(
+        "--sdpo-distill-weight",
+        type=float,
+        default=float(os.environ.get("SDPO_DISTILL_WEIGHT", "1.0")),
+        help="Cross-entropy token weight for Tinker SDPO-style self-teacher targets.",
+    )
+    parser.add_argument(
+        "--sdpo-topk",
+        type=int,
+        default=int(os.environ.get("SDPO_TOPK", "20")),
+        help="Top-k teacher distribution size for SDPO distillation; 0 uses generated-target CE fallback.",
+    )
+    parser.add_argument(
+        "--sdpo-skip-first-n-tokens",
+        type=int,
+        default=int(os.environ.get("SDPO_SKIP_FIRST_N_TOKENS", "0")),
+        help="Skip this many sampled response tokens when applying top-k SDPO CE.",
+    )
+    parser.add_argument(
+        "--sdpo-max-teacher-tokens",
+        type=int,
+        default=int(os.environ.get("SDPO_MAX_TEACHER_TOKENS", "256")),
+        help="Maximum tokens for feedback-conditioned self-teacher completions.",
+    )
+    parser.add_argument(
+        "--sdpo-teacher-temperature",
+        type=float,
+        default=float(os.environ.get("SDPO_TEACHER_TEMPERATURE", "0.0")),
+        help="Sampling temperature for SDPO-style self-teacher completions.",
+    )
+    parser.add_argument(
+        "--sdpo-distill-on",
+        default=os.environ.get("SDPO_DISTILL_ON", "failed"),
+        help="Which sharded rollouts get SDPO distillation targets: failed, all, or none.",
     )
     parser.add_argument("--learning-rate", type=float, default=float(os.environ.get("LR", "1e-5")))
     parser.add_argument("--lora-rank", type=int, default=int(os.environ.get("LORA_RANK", "32")))
@@ -291,6 +340,7 @@ def main() -> None:
         from tinker import types
         from tinker.types.tensor_data import TensorData
         from tinker_cookbook import model_info, renderers
+        from tinker_cookbook.supervised.common import datum_from_model_input_weights
         from tinker_cookbook.tokenizer_utils import get_tokenizer
     except ImportError as exc:
         raise SystemExit("Install Tinker dependencies with: uv pip install -r requirements-tinker.txt") from exc
@@ -311,6 +361,16 @@ def main() -> None:
         sampling_params = types.SamplingParams(
             max_tokens=args.max_tokens,
             temperature=args.temperature,
+            stop=renderer.get_stop_sequences(),
+        )
+        sdpo_sampling_params = types.SamplingParams(
+            max_tokens=args.sdpo_max_teacher_tokens,
+            temperature=args.sdpo_teacher_temperature,
+            stop=renderer.get_stop_sequences(),
+        )
+        sdpo_forced_sampling_params = types.SamplingParams(
+            max_tokens=1,
+            temperature=0.0,
             stop=renderer.get_stop_sequences(),
         )
         adam_params = types.AdamParams(
@@ -365,6 +425,88 @@ def main() -> None:
             )
             return True
 
+        def add_sdpo_distillation_datum(
+            datums: list[Any],
+            prompt: Any,
+            teacher_tokens: list[int],
+            weight: float,
+        ) -> bool:
+            if weight <= 0.0 or not teacher_tokens:
+                return False
+            model_input = prompt.append(types.EncodedTextChunk(tokens=teacher_tokens))
+            weights = torch.zeros(model_input.length, dtype=torch.float32)
+            weights[prompt.length :] = float(weight)
+            datums.append(datum_from_model_input_weights(model_input, weights))
+            return True
+
+        def add_sdpo_topk_distillation_datum(
+            datums: list[Any],
+            sampling_client: Any,
+            student_prompt: Any,
+            teacher_prompt: Any,
+            sampled_tokens: list[int],
+            topk: int,
+            weight: float,
+            skip_first_n_tokens: int,
+        ) -> int:
+            if weight <= 0.0 or topk <= 0 or not sampled_tokens:
+                return 0
+
+            teacher_forced = teacher_prompt.append(types.EncodedTextChunk(tokens=sampled_tokens))
+            teacher_result = wait_result(
+                sampling_client.sample(
+                    prompt=teacher_forced,
+                    num_samples=1,
+                    sampling_params=sdpo_forced_sampling_params,
+                    include_prompt_logprobs=True,
+                    topk_prompt_logprobs=topk,
+                )
+            )
+            topk_all = teacher_result.topk_prompt_logprobs
+            if not topk_all:
+                return 0
+
+            model_input = student_prompt.append(types.EncodedTextChunk(tokens=sampled_tokens[:-1]))
+            target_tokens = torch.zeros(model_input.length, topk, dtype=torch.long)
+            weights = torch.zeros(model_input.length, topk, dtype=torch.float32)
+            student_completion_start = student_prompt.length - 1
+            teacher_completion_start = teacher_prompt.length
+            positions_used = 0
+
+            for token_offset in range(len(sampled_tokens)):
+                if token_offset < skip_first_n_tokens:
+                    continue
+                student_pos = student_completion_start + token_offset
+                teacher_pos = teacher_completion_start + token_offset
+                if student_pos >= model_input.length or teacher_pos >= len(topk_all):
+                    continue
+                topk_entries = topk_all[teacher_pos]
+                if not topk_entries:
+                    continue
+                token_ids = torch.tensor([token_id for token_id, _logprob in topk_entries[:topk]], dtype=torch.long)
+                logprobs = torch.tensor([logprob for _token_id, logprob in topk_entries[:topk]], dtype=torch.float32)
+                if token_ids.numel() == 0:
+                    continue
+                logprobs = logprobs - torch.logsumexp(logprobs, dim=0)
+                probs = logprobs.exp() * float(weight)
+                k_actual = token_ids.numel()
+                target_tokens[student_pos, :k_actual] = token_ids
+                weights[student_pos, :k_actual] = probs
+                positions_used += 1
+
+            if positions_used == 0:
+                return 0
+            datums.append(
+                types.Datum(
+                    model_input=model_input,
+                    loss_fn_inputs={
+                        "target_tokens": TensorData.from_torch(target_tokens),
+                        "weights": TensorData.from_torch(weights),
+                    },
+                )
+            )
+            return positions_used
+
         for step in range(total_steps):
             start_time = time.time()
             batch_rows = rows[step * args.batch_size : (step + 1) * args.batch_size]
@@ -373,8 +515,10 @@ def main() -> None:
             futures = []
             prompts = []
             datums = []
+            sdpo_datums = []
             group_rewards: list[float] = []
             sample_count = 0
+            sdpo_sample_count = 0
             sharded_flags = [is_sharded_multiturn_row(row) for row in batch_rows]
             if any(sharded_flags) and not all(sharded_flags):
                 raise ValueError("Mixed sharded_multiturn and single-turn rows in one batch are not supported.")
@@ -449,6 +593,78 @@ def main() -> None:
                                 advantage,
                             ):
                                 sample_count += 1
+
+                    if args.sharded_reward_mode == SDPO_REWARD_MODE:
+                        for rollout_idx, rollout in enumerate(rollouts):
+                            turn_index = select_sdpo_distillation_turn(rollout, args.sdpo_distill_on)
+                            if turn_index is None:
+                                continue
+                            successful_attempt = first_successful_response(rollouts, exclude_index=rollout_idx)
+                            teacher_messages = build_sdpo_teacher_messages(
+                                rollout,
+                                turn_index,
+                                successful_previous_attempt=successful_attempt,
+                            )
+                            teacher_prompt = renderer.build_generation_prompt(teacher_messages)
+                            selected_turn = rollout.turns[turn_index]
+                            teacher_response = ""
+                            target_tokens = len(selected_turn.sampled_tokens)
+                            distill_positions = 0
+                            target_mode = "topk"
+                            if args.sdpo_topk > 0:
+                                distill_positions = add_sdpo_topk_distillation_datum(
+                                    sdpo_datums,
+                                    sampling_client,
+                                    selected_turn.prompt,
+                                    teacher_prompt,
+                                    selected_turn.sampled_tokens,
+                                    args.sdpo_topk,
+                                    args.sdpo_distill_weight,
+                                    args.sdpo_skip_first_n_tokens,
+                                )
+                            else:
+                                target_mode = "generated"
+                                teacher_result = wait_result(
+                                    sampling_client.sample(
+                                        prompt=teacher_prompt,
+                                        num_samples=1,
+                                        sampling_params=sdpo_sampling_params,
+                                    )
+                                )
+                                sequence = teacher_result.sequences[0]
+                                teacher_tokens = list(sequence.tokens)
+                                parsed_message, _ = renderer.parse_response(teacher_tokens)
+                                teacher_response = renderers.get_text_content(parsed_message)
+                                target_tokens = len(teacher_tokens)
+                                if add_sdpo_distillation_datum(
+                                    sdpo_datums,
+                                    selected_turn.prompt,
+                                    teacher_tokens,
+                                    args.sdpo_distill_weight,
+                                ):
+                                    distill_positions = target_tokens
+
+                            if distill_positions > 0:
+                                sdpo_sample_count += 1
+                                write_jsonl(
+                                    samples_path,
+                                    {
+                                        "step": step,
+                                        "idx": row.get("idx"),
+                                        "dataset": row.get("dataset"),
+                                        "rollout_idx": rollout_idx,
+                                        "record_type": "sdpo_teacher",
+                                        "target_mode": target_mode,
+                                        "distill_turn": selected_turn.turn,
+                                        "student_response": selected_turn.response,
+                                        "teacher_response": teacher_response,
+                                        "teacher_target_tokens": target_tokens,
+                                        "distill_positions": distill_positions,
+                                        "sdpo_topk": args.sdpo_topk,
+                                        "has_successful_peer": successful_attempt is not None,
+                                        "sharded_reward_mode": args.sharded_reward_mode,
+                                    },
+                                )
             else:
                 for row in batch_rows:
                     prompt = renderer.build_generation_prompt(row_to_messages(row))
@@ -501,20 +717,33 @@ def main() -> None:
                             sample_count += 1
 
             train_loss = None
+            loss_metrics = {}
             fwd_bwd_metrics = {}
             optim_metrics = {}
+            training_batches = []
             if datums:
-                fwd_bwd_future = training_client.forward_backward(datums, loss_fn="importance_sampling")
-                optim_future = training_client.optim_step(adam_params)
-                fwd_bwd_result = wait_result(fwd_bwd_future)
-                optim_result = wait_result(optim_future)
-                train_loss = getattr(fwd_bwd_result, "loss", None)
-                fwd_bwd_metrics = {
-                    f"fwd_bwd/{key}": value for key, value in (getattr(fwd_bwd_result, "metrics", None) or {}).items()
-                }
+                training_batches.append(("rl", datums, "importance_sampling"))
+            if sdpo_datums:
+                training_batches.append(("sdpo", sdpo_datums, "cross_entropy"))
+
+            if training_batches:
+                losses: dict[str, Any] = {}
+                for label, batch_datums, loss_fn in training_batches:
+                    fwd_bwd_result = wait_result(training_client.forward_backward(batch_datums, loss_fn=loss_fn))
+                    losses[label] = getattr(fwd_bwd_result, "loss", None)
+                    prefix = "fwd_bwd" if label == "rl" and len(training_batches) == 1 else f"fwd_bwd/{label}"
+                    fwd_bwd_metrics.update(
+                        {
+                            f"{prefix}/{key}": value
+                            for key, value in (getattr(fwd_bwd_result, "metrics", None) or {}).items()
+                        }
+                    )
+                optim_result = wait_result(training_client.optim_step(adam_params))
+                train_loss = losses.get("rl", losses.get("sdpo"))
+                loss_metrics = {f"loss/{label}": value for label, value in losses.items() if value is not None}
                 optim_metrics = getattr(optim_result, "metrics", None) or {}
             else:
-                LOGGER.warning("Step %d produced no non-zero advantages; skipped optimizer step.", step)
+                LOGGER.warning("Step %d produced no trainable RL or SDPO datums; skipped optimizer step.", step)
 
             if args.save_every > 0 and (step + 1) % args.save_every == 0:
                 wait_result(training_client.save_state(name=f"{args.run_name}-step-{step + 1:06d}"))
@@ -523,14 +752,22 @@ def main() -> None:
                 "step": step,
                 "examples": len(batch_rows),
                 "samples_used": sample_count,
+                "sdpo_samples_used": sdpo_sample_count,
                 "reward_mean": mean(group_rewards),
                 "loss": train_loss,
                 "time_sec": time.time() - start_time,
+                **loss_metrics,
                 **fwd_bwd_metrics,
                 **optim_metrics,
             }
             write_jsonl(metrics_path, metrics)
-            LOGGER.info("step=%d reward_mean=%.4f samples_used=%d", step, metrics["reward_mean"], sample_count)
+            LOGGER.info(
+                "step=%d reward_mean=%.4f samples_used=%d sdpo_samples_used=%d",
+                step,
+                metrics["reward_mean"],
+                sample_count,
+                sdpo_sample_count,
+            )
 
         final_state = wait_result(training_client.save_state(name=f"{args.run_name}-final"))
         final_sampler = wait_result(training_client.save_weights_for_sampler(name=f"{args.run_name}-final-sampler"))
