@@ -20,11 +20,12 @@ The intended research direction is:
 - report accuracy, convergence over RL steps, model-scale effects, task-type
   effects, and possible OOD changes.
 
-The work so far does not implement the final RLRF method yet. It makes progress
-by getting managed on-policy RL, checkpointing, and held-out evaluation working
-on Tinker without breaking the existing local/JHU `verl` path. That gives us a
-baseline harness and enough operational confidence to run sparse-GRPO
-comparisons before adding dense-feedback logic.
+The work so far now includes the baseline Tinker harness, sparse GRPO, dense
+RLRF-style reward shaping, and a Tinker-compatible SDPO-style feedback
+distillation path. The current pilot result is mixed: dense feedback and the
+conservative SDPO setting avoid the sparse-GRPO regression, but neither has yet
+improved held-out accuracy beyond the base model on the 10-row scaled
+`lost_math_200` test split.
 
 Update after sparse baselines: the first dense/RLRF-style reward mode is
 implemented and has one 30-step Tinker pilot. It is not full SDPO logit
@@ -845,6 +846,22 @@ Remaining gaps:
    reduced the top-k CE loss scale by roughly an order of magnitude relative to
    the first SDPO pilot. This is the correct next checkpoint to evaluate before
    trying the `SDPO_TOPK=0` generated-target ablation.
+
+   Completed conservative SDPO top-k 30-step eval:
+
+   - run: `lost-math-103-sdpo-topk-w01-skip3-shuffle7-30-eval`
+   - reward: `5/10 = 50.0%`
+   - format errors: `2/10 = 20.0%`
+   - comparison to base and dense 30/60-step checkpoints: tied
+   - comparison to sparse GRPO and first SDPO top-k 30-step checkpoint: `+1/10`
+   - success set: `sharded-GSM8K/1027`, `sharded-GSM8K/40`,
+     `sharded-GSM8K/543`, `sharded-GSM8K/752`, `sharded-GSM8K/435`
+
+   Interpretation: reducing SDPO weight and skipping the first three generated
+   tokens fixed the first SDPO pilot's regression on `sharded-GSM8K/1027`. The
+   conservative SDPO setting is now behaviorally tied with dense reward shaping:
+   it preserves the project-specific sparse-regression fix, but it is still not
+   a held-out accuracy win over base.
 
 6. Run a minimal local/JHU smoke test.
 

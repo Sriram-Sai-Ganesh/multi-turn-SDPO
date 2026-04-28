@@ -386,6 +386,22 @@ NUM_SAMPLES=1 \
 ./run_tinker_eval.sh lost-math-103-sdpo-topk-w01-skip3-shuffle7-30-eval
 ```
 
+Observed conservative SDPO top-k 30-step eval:
+
+- run: `lost-math-103-sdpo-topk-w01-skip3-shuffle7-30-eval`
+- reward: `5/10 = 50.0%`
+- format errors: `2/10 = 20.0%`
+- comparison to base and dense 30/60-step checkpoints: tied
+- comparison to sparse GRPO and first SDPO top-k 30-step checkpoint: `+1/10`
+- success set: `sharded-GSM8K/1027`, `sharded-GSM8K/40`,
+  `sharded-GSM8K/543`, `sharded-GSM8K/752`, `sharded-GSM8K/435`
+
+Interpretation: reducing SDPO weight and skipping the first three generated
+tokens fixed the first SDPO pilot's regression on `sharded-GSM8K/1027`. The
+conservative SDPO setting is now behaviorally tied with dense reward shaping:
+it preserves the project-specific sparse-regression fix, but it is still not a
+held-out accuracy win over base.
+
 ## Local/JHU Preprocessing
 
 The standard parquet preprocessing path accepts the same JSON schema:
@@ -839,6 +855,8 @@ Observed eval:
 | Sparse GRPO 30-step | `4/10` | `40.0%` | `2/10` |
 | Dense RLRF 30-step | `5/10` | `50.0%` | `2/10` |
 | Dense RLRF 60-step | `5/10` | `50.0%` | `2/10` |
+| SDPO top-k 30-step, weight 1.0 | `4/10` | `40.0%` | `2/10` |
+| SDPO top-k 30-step, weight 0.1 skip 3 | `5/10` | `50.0%` | `2/10` |
 
 Example-level comparison:
 
