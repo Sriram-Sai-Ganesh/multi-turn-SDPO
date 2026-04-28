@@ -65,6 +65,18 @@ def parse_args() -> argparse.Namespace:
         default=int(os.environ.get("MAX_TURNS", "0")),
         help="Max assistant turns for sharded_multiturn rows; 0 uses len(shards)+1.",
     )
+    parser.add_argument(
+        "--sharded-prompt-style",
+        default=os.environ.get("SHARDED_PROMPT_STYLE", "default"),
+        help="Prompt style for sharded_multiturn rows: default, minimal, or linc_math.",
+    )
+    parser.add_argument(
+        "--sharded-allow-untagged-final",
+        action="store_true",
+        default=os.environ.get("SHARDED_ALLOW_UNTAGGED_FINAL", "0").strip().lower()
+        in {"1", "true", "yes", "on"},
+        help="Allow untagged responses to be scored as final answers for sharded_multiturn rows.",
+    )
     parser.add_argument("--max-tokens", type=int, default=int(os.environ.get("MAX_TOKENS", "256")))
     parser.add_argument("--temperature", type=float, default=float(os.environ.get("TEMPERATURE", "0.0")))
     parser.add_argument("--dry-run", action="store_true", help="Validate local inputs without contacting Tinker.")
@@ -84,13 +96,15 @@ def main() -> None:
     LOGGER.info("Loaded %d %s records from %s", len(rows), args.split, split_file)
 
     if args.dry_run:
-        first_messages = row_to_messages(rows[0])
+        first_messages = row_to_messages(rows[0], prompt_style=args.sharded_prompt_style)
         LOGGER.info("Dry run prompt roles: %s", [msg["role"] for msg in first_messages])
         LOGGER.info(
-            "Dry run dataset=%s model=%s model_path=%s",
+            "Dry run dataset=%s model=%s model_path=%s sharded_prompt_style=%s allow_untagged_final=%s",
             rows[0].get("dataset"),
             args.model_name,
             args.model_path,
+            args.sharded_prompt_style,
+            args.sharded_allow_untagged_final,
         )
         return
 
@@ -141,11 +155,13 @@ def main() -> None:
         model_label = args.model_name
 
     LOGGER.info(
-        "Evaluating model=%s renderer=%s examples=%d num_samples=%d",
+        "Evaluating model=%s renderer=%s examples=%d num_samples=%d sharded_prompt_style=%s allow_untagged_final=%s",
         model_label,
         renderer_name,
         len(rows),
         args.num_samples,
+        args.sharded_prompt_style,
+        args.sharded_allow_untagged_final,
     )
     start_time = time.time()
     rewards: list[float] = []
@@ -161,7 +177,7 @@ def main() -> None:
 
         if all(sharded_flags):
             for row in batch_rows:
-                task = ShardedTask.from_row(row)
+                task = ShardedTask.from_row(row, allow_untagged_final=args.sharded_allow_untagged_final)
                 row_rewards: list[float] = []
                 for sample_idx in range(args.num_samples):
                     def sample_fn(messages: list[dict[str, str]]) -> SampledResponse:
@@ -183,6 +199,7 @@ def main() -> None:
                         task,
                         sample_fn,
                         max_turns=args.max_turns if args.max_turns > 0 else None,
+                        prompt_style=args.sharded_prompt_style,
                     )
                     reward = rollout.reward
                     rewards.append(reward)

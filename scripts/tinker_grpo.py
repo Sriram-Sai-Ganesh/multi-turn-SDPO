@@ -70,11 +70,11 @@ def shuffle_records(records: list[dict[str, Any]], seed: int | None) -> list[dic
     return shuffled
 
 
-def row_to_messages(row: dict[str, Any]) -> list[dict[str, str]]:
+def row_to_messages(row: dict[str, Any], prompt_style: str | None = None) -> list[dict[str, str]]:
     if is_sharded_multiturn_row(row):
         from scripts.sharded_multiturn import initial_messages
 
-        return initial_messages(ShardedTask.from_row(row))
+        return initial_messages(ShardedTask.from_row(row), prompt_style=prompt_style)
     messages: list[dict[str, str]] = []
     system = row.get("system")
     if system:
@@ -265,6 +265,18 @@ def parse_args() -> argparse.Namespace:
         help="Reward mode for sharded_multiturn training: sparse, dense/rlrf, or sdpo.",
     )
     parser.add_argument(
+        "--sharded-prompt-style",
+        default=os.environ.get("SHARDED_PROMPT_STYLE", "default"),
+        help="Prompt style for sharded_multiturn rows: default, minimal, or linc_math.",
+    )
+    parser.add_argument(
+        "--sharded-allow-untagged-final",
+        action="store_true",
+        default=os.environ.get("SHARDED_ALLOW_UNTAGGED_FINAL", "0").strip().lower()
+        in {"1", "true", "yes", "on"},
+        help="Allow untagged responses to be scored as final answers for sharded_multiturn rows.",
+    )
+    parser.add_argument(
         "--sdpo-distill-weight",
         type=float,
         default=float(os.environ.get("SDPO_DISTILL_WEIGHT", "0.1")),
@@ -299,6 +311,11 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("SDPO_DISTILL_ON", "failed"),
         help="Which sharded rollouts get SDPO distillation targets: failed, all, or none.",
     )
+    parser.add_argument(
+        "--sdpo-teacher-prompt-style",
+        default=os.environ.get("SDPO_TEACHER_PROMPT_STYLE", "default"),
+        help="Feedback teacher prompt style for SDPO: default or brief.",
+    )
     parser.add_argument("--learning-rate", type=float, default=float(os.environ.get("LR", "1e-5")))
     parser.add_argument("--lora-rank", type=int, default=int(os.environ.get("LORA_RANK", "32")))
     parser.add_argument("--save-every", type=int, default=int(os.environ.get("SAVE_EVERY", "0")))
@@ -321,7 +338,7 @@ def main() -> None:
     LOGGER.info("Loaded %d %s records from %s", len(rows), args.split, split_file)
 
     if args.dry_run:
-        first_messages = row_to_messages(rows[0])
+        first_messages = row_to_messages(rows[0], prompt_style=args.sharded_prompt_style)
         LOGGER.info("Dry run prompt roles: %s", [msg["role"] for msg in first_messages])
         LOGGER.info(
             "Dry run dataset=%s model=%s sharded_reward_mode=%s",
@@ -381,10 +398,12 @@ def main() -> None:
         )
 
         LOGGER.info(
-            "Using Tinker model=%s renderer=%s sharded_reward_mode=%s",
+            "Using Tinker model=%s renderer=%s sharded_reward_mode=%s sharded_prompt_style=%s allow_untagged_final=%s",
             args.model_name,
             renderer_name,
             args.sharded_reward_mode,
+            args.sharded_prompt_style,
+            args.sharded_allow_untagged_final,
         )
         service_client = tinker.ServiceClient(base_url=args.base_url)
         training_client = service_client.create_lora_training_client(
@@ -525,7 +544,7 @@ def main() -> None:
 
             if all(sharded_flags):
                 for row in batch_rows:
-                    task = ShardedTask.from_row(row)
+                    task = ShardedTask.from_row(row, allow_untagged_final=args.sharded_allow_untagged_final)
                     rollouts = []
                     rollout_rewards: list[float] = []
                     turn_reward_groups: list[list[float]] = []
@@ -555,6 +574,7 @@ def main() -> None:
                             task,
                             sample_fn,
                             max_turns=args.max_turns if args.max_turns > 0 else None,
+                            prompt_style=args.sharded_prompt_style,
                         )
                         rollouts.append(rollout)
                         turn_rewards = rollout_training_rewards(rollout, args.sharded_reward_mode)
@@ -604,6 +624,7 @@ def main() -> None:
                                 rollout,
                                 turn_index,
                                 successful_previous_attempt=successful_attempt,
+                                teacher_prompt_style=args.sdpo_teacher_prompt_style,
                             )
                             teacher_prompt = renderer.build_generation_prompt(teacher_messages)
                             selected_turn = rollout.turns[turn_index]
@@ -667,7 +688,7 @@ def main() -> None:
                                 )
             else:
                 for row in batch_rows:
-                    prompt = renderer.build_generation_prompt(row_to_messages(row))
+                    prompt = renderer.build_generation_prompt(row_to_messages(row, prompt_style=args.sharded_prompt_style))
                     futures.append(
                         sampling_client.sample(
                             prompt=prompt,

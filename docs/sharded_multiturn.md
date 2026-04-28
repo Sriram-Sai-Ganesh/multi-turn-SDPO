@@ -535,6 +535,51 @@ math-only pilot. Base Qwen solves some math cases but fails every held-out
 actions case, and most failures involve premature final-answer behavior before
 all necessary shards are revealed.
 
+## Prompt-Confound Ablation
+
+The default sharded prompt is intentionally explicit about asking clarifying
+questions and using final-answer XML tags. That is useful for stable training,
+but it can confound claims about intrinsic multi-turn capability. The upstream
+Lost-in-Conversation math prompt is much lighter: a short math system prompt
+and a `Q: [[QUESTION]]` / `A:` completion shape. To separate prompt effects from
+learning effects, the Tinker sharded runner now supports prompt styles:
+
+- `SHARDED_PROMPT_STYLE=default`: current verbose system prompt and shard
+  follow-up instruction.
+- `SHARDED_PROMPT_STYLE=minimal`: no system prompt, initial user message is
+  only the underspecified question, and shard messages are only the revealed
+  shard text.
+- `SHARDED_PROMPT_STYLE=linc_math`: use the upstream math-style `Q: ... A:`
+  shape for math rows and the minimal style for non-math rows.
+- `SHARDED_ALLOW_UNTAGGED_FINAL=1`: score untagged non-question responses as
+  final-answer attempts. This should be paired with minimal or `linc_math`
+  prompts because those prompts do not tell the model to use XML tags.
+- `SDPO_TEACHER_PROMPT_STYLE=brief`: use a shorter feedback teacher prompt
+  beginning with "This may be under-specified..." for SDPO runs.
+
+Run this before interpreting dense/SDPO gains on the mixed split:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_actions_200 \
+SPLIT=test \
+MODEL_NAME=Qwen/Qwen3-8B \
+RENDERER_NAME=qwen3_disable_thinking \
+SHARDED_PROMPT_STYLE=minimal \
+SHARDED_ALLOW_UNTAGGED_FINAL=1 \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+TEMPERATURE=0.0 \
+BATCH_SIZE=1 \
+NUM_SAMPLES=1 \
+./run_tinker_eval.sh lost-math-actions-base-minimal-untagged-test
+```
+
+If this minimal-prompt base result is much stronger than the default-prompt
+base, then prompt scaffolding is a major confound and the main result table
+should include both prompt regimes. If it is still weak, continue with dense
+RLRF and conservative top-k SDPO under the same minimal prompt settings.
+
 Then run comparable 60-step pilots:
 
 ```bash

@@ -30,6 +30,16 @@ DEFAULT_SYSTEM_PROMPT = (
     "details; never invent hidden details or write messages that pretend to "
     "come from the user."
 )
+LINC_MATH_SYSTEM_PROMPT = "As an expert problem solver solve step by step the following mathematical questions."
+BRIEF_UNDERSPECIFIED_PREFIX = (
+    "This may be under-specified. If needed, ask a concise clarifying question "
+    "before answering."
+)
+DEFAULT_PROMPT_STYLE = "default"
+MINIMAL_PROMPT_STYLE = "minimal"
+LINC_MATH_PROMPT_STYLE = "linc_math"
+DEFAULT_TEACHER_PROMPT_STYLE = "default"
+BRIEF_TEACHER_PROMPT_STYLE = "brief"
 
 FINAL_TAG_RE = re.compile(
     r"<(?P<tag>final|final[-_]answer|answer)>\s*(?P<answer>.*?)\s*</(?P=tag)>",
@@ -82,10 +92,11 @@ class ShardedTask:
     kind: str = "exact"
     system: str = DEFAULT_SYSTEM_PROMPT
     full_prompt: str | None = None
+    allow_untagged_final: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "ShardedTask":
+    def from_row(cls, row: dict[str, Any], allow_untagged_final: bool = False) -> "ShardedTask":
         prompt = _first_present(
             row,
             "prompt",
@@ -107,6 +118,7 @@ class ShardedTask:
             kind=kind,
             system=str(row.get("system") or DEFAULT_SYSTEM_PROMPT),
             full_prompt=_optional_str(row.get("full_prompt") or row.get("fully_specified_prompt")),
+            allow_untagged_final=allow_untagged_final,
             metadata={k: v for k, v in row.items() if k not in {"prompt", "answer", "shards", "system"}},
         )
 
@@ -210,14 +222,50 @@ def _stringify_shard(shard: Any) -> str:
     return str(shard)
 
 
-def initial_messages(task: ShardedTask) -> list[dict[str, str]]:
+def normalize_prompt_style(style: str | None) -> str:
+    normalized = (style or DEFAULT_PROMPT_STYLE).strip().lower().replace("-", "_")
+    if normalized in {DEFAULT_PROMPT_STYLE, "verbose"}:
+        return DEFAULT_PROMPT_STYLE
+    if normalized in {MINIMAL_PROMPT_STYLE, "bare", "question_only", "question"}:
+        return MINIMAL_PROMPT_STYLE
+    if normalized in {LINC_MATH_PROMPT_STYLE, "paper_math", "lost_in_conversation_math"}:
+        return LINC_MATH_PROMPT_STYLE
+    raise ValueError(f"Unsupported sharded prompt style: {style!r}")
+
+
+def normalize_teacher_prompt_style(style: str | None) -> str:
+    normalized = (style or DEFAULT_TEACHER_PROMPT_STYLE).strip().lower().replace("-", "_")
+    if normalized in {DEFAULT_TEACHER_PROMPT_STYLE, "verbose"}:
+        return DEFAULT_TEACHER_PROMPT_STYLE
+    if normalized in {BRIEF_TEACHER_PROMPT_STYLE, "minimal", "short"}:
+        return BRIEF_TEACHER_PROMPT_STYLE
+    raise ValueError(f"Unsupported teacher prompt style: {style!r}")
+
+
+def _is_math_task(task: ShardedTask) -> bool:
+    return str(task.metadata.get("source_task") or "").lower() == "math" or task.kind.lower() in {"number", "numeric", "gsm8k"}
+
+
+def initial_messages(task: ShardedTask, prompt_style: str | None = None) -> list[dict[str, str]]:
+    style = normalize_prompt_style(prompt_style)
+    if style == MINIMAL_PROMPT_STYLE:
+        return [{"role": "user", "content": task.prompt}]
+    if style == LINC_MATH_PROMPT_STYLE and _is_math_task(task):
+        return [
+            {"role": "system", "content": LINC_MATH_SYSTEM_PROMPT},
+            {"role": "user", "content": f"Q: {task.prompt}\nA:"},
+        ]
+    if style == LINC_MATH_PROMPT_STYLE:
+        return [{"role": "user", "content": task.prompt}]
     return [
         {"role": "system", "content": task.system},
         {"role": "user", "content": task.prompt},
     ]
 
 
-def shard_message(shard: str, shard_index: int, shard_count: int) -> str:
+def shard_message(shard: str, shard_index: int, shard_count: int, prompt_style: str | None = None) -> str:
+    if normalize_prompt_style(prompt_style) != DEFAULT_PROMPT_STYLE:
+        return shard
     return (
         f"{shard}\n\n"
         "Ask another concise clarifying question if more information is needed. "
@@ -225,11 +273,13 @@ def shard_message(shard: str, shard_index: int, shard_count: int) -> str:
     )
 
 
-def no_more_shards_message() -> str:
+def no_more_shards_message(prompt_style: str | None = None) -> str:
+    if normalize_prompt_style(prompt_style) != DEFAULT_PROMPT_STYLE:
+        return "No more information is available."
     return "No more hidden information is available. Reply with your best final answer using final XML tags."
 
 
-def extract_final_answer(response: str) -> str | None:
+def extract_final_answer(response: str, allow_untagged: bool = False) -> str | None:
     tag_match = FINAL_TAG_RE.search(response)
     if tag_match:
         candidate = tag_match.group("answer").strip()
@@ -240,6 +290,11 @@ def extract_final_answer(response: str) -> str | None:
     prefix_match = FINAL_PREFIX_RE.search(lines[-1] if lines else response)
     if prefix_match:
         candidate = prefix_match.group(1).strip()
+        if is_clarifying_text(candidate) or is_placeholder_final_text(candidate):
+            return None
+        return candidate
+    if allow_untagged and not contains_final_answer_markup(response):
+        candidate = response.strip()
         if is_clarifying_text(candidate) or is_placeholder_final_text(candidate):
             return None
         return candidate
@@ -347,7 +402,7 @@ def score_final_answer(prediction: str | None, reference: str, kind: str = "exac
 def score_sharded_response(response: str, task: ShardedTask) -> dict[str, Any]:
     if contains_environment_impersonation(response):
         return _environment_impersonation_score()
-    return score_final_answer(extract_final_answer(response), task.answer, task.kind)
+    return score_final_answer(extract_final_answer(response, task.allow_untagged_final), task.answer, task.kind)
 
 
 def normalize_reward_mode(mode: str | None) -> str:
@@ -374,7 +429,7 @@ def score_sharded_turn(response: str, task: ShardedTask, revealed_shards_before_
         score.update({"dense_action": "environment_impersonation", "revealed_shards": revealed_shards_before_turn})
         return score
 
-    prediction = extract_final_answer(response)
+    prediction = extract_final_answer(response, task.allow_untagged_final)
     if prediction is not None:
         if revealed_shards_before_turn < total_shards:
             missing = total_shards - revealed_shards_before_turn
@@ -530,6 +585,7 @@ def build_sdpo_teacher_messages(
     rollout: MultiturnRollout,
     turn_index: int,
     successful_previous_attempt: str | None = None,
+    teacher_prompt_style: str | None = None,
 ) -> list[dict[str, str]]:
     """Build a feedback-conditioned self-teacher prompt for one sharded turn.
 
@@ -542,6 +598,7 @@ def build_sdpo_teacher_messages(
     turn = rollout.turns[turn_index]
     revealed = _revealed_before_turn(rollout, turn_index)
     missing = max(len(rollout.task.shards) - revealed, 0)
+    style = normalize_teacher_prompt_style(teacher_prompt_style)
 
     if missing > 0:
         ideal_behavior = (
@@ -564,6 +621,22 @@ def build_sdpo_teacher_messages(
         f"{message.get('role', 'unknown')}: {message.get('content', '')}"
         for message in turn.prompt_messages
     )
+    if style == BRIEF_TEACHER_PROMPT_STYLE:
+        teacher_user = (
+            f"{BRIEF_UNDERSPECIFIED_PREFIX}\n\n"
+            f"Original conversation:\n{conversation}\n\n"
+            f"Full instruction, visible only to you:\n{full_instruction}\n\n"
+            f"Hidden details, visible only to you:\n{shard_lines or '(none)'}\n\n"
+            f"Reference answer, visible only to you:\n{rollout.task.answer}\n\n"
+            f"Feedback for the selected turn:\n{rollout_feedback_summary(rollout, turn_index)}\n\n"
+            f"Ideal behavior:\n{ideal_behavior}\n\n"
+            "Return only the next assistant message."
+        )
+        return [
+            {"role": "system", "content": "Write only the target assistant message."},
+            {"role": "user", "content": teacher_user},
+        ]
+
     teacher_user = (
         "You are the feedback-conditioned self-teacher for a sharded multi-turn task.\n"
         "Use the privileged context and feedback to write the next assistant message "
@@ -608,8 +681,10 @@ def run_sharded_interaction(
     task: ShardedTask,
     sample_fn: Callable[[list[dict[str, str]]], str | SampledResponse],
     max_turns: int | None = None,
+    prompt_style: str | None = None,
 ) -> MultiturnRollout:
-    messages = initial_messages(task)
+    prompt_style = normalize_prompt_style(prompt_style)
+    messages = initial_messages(task, prompt_style=prompt_style)
     turns: list[AssistantTurn] = []
     turn_scores: list[dict[str, Any]] = []
     revealed_shards = 0
@@ -639,12 +714,17 @@ def run_sharded_interaction(
             messages.append(
                 {
                     "role": "user",
-                    "content": shard_message(task.shards[revealed_shards], revealed_shards, len(task.shards)),
+                    "content": shard_message(
+                        task.shards[revealed_shards],
+                        revealed_shards,
+                        len(task.shards),
+                        prompt_style=prompt_style,
+                    ),
                 }
             )
             revealed_shards += 1
         elif turn_idx < max_turns - 1:
-            messages.append({"role": "user", "content": no_more_shards_message()})
+            messages.append({"role": "user", "content": no_more_shards_message(prompt_style=prompt_style)})
 
     final_response = turns[-1].response if turns else ""
     if any(contains_environment_impersonation(turn.response) for turn in turns):

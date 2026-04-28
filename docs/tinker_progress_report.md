@@ -958,6 +958,43 @@ Remaining gaps:
    shards are revealed. The next run should be sparse GRPO on this split, then
    dense RLRF and conservative top-k SDPO under the same 60-step budget.
 
+   Prompt-confound follow-up:
+
+   The default sharded system prompt and SDPO teacher prompt are intentionally
+   explicit, but that verbosity may itself affect multi-turn behavior. The
+   upstream Lost-in-Conversation math prompt is much lighter (`Q: ...` / `A:`
+   with a short math system prompt), so this branch now supports a prompt
+   ablation:
+
+   - `SHARDED_PROMPT_STYLE=minimal`: no system prompt, only the underspecified
+     question as the initial user message, and plain shard text in follow-up
+     turns.
+   - `SHARDED_PROMPT_STYLE=linc_math`: upstream-style math prompt for math rows,
+     minimal prompt for other rows.
+   - `SHARDED_ALLOW_UNTAGGED_FINAL=1`: score non-question untagged responses as
+     final-answer attempts, so removing the XML instruction does not create a
+     pure formatting failure.
+   - `SDPO_TEACHER_PROMPT_STYLE=brief`: use a shorter SDPO teacher prompt with a
+     "This may be under-specified..." prefix.
+
+   Next prompt-ablation command:
+
+   ```bash
+   PYTHON_BIN=.venv/bin/python \
+   DATA_PATH=datasets/sharded_multiturn/lost_math_actions_200 \
+   SPLIT=test \
+   MODEL_NAME=Qwen/Qwen3-8B \
+   RENDERER_NAME=qwen3_disable_thinking \
+   SHARDED_PROMPT_STYLE=minimal \
+   SHARDED_ALLOW_UNTAGGED_FINAL=1 \
+   MAX_TURNS=0 \
+   MAX_TOKENS=256 \
+   TEMPERATURE=0.0 \
+   BATCH_SIZE=1 \
+   NUM_SAMPLES=1 \
+   ./run_tinker_eval.sh lost-math-actions-base-minimal-untagged-test
+   ```
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or

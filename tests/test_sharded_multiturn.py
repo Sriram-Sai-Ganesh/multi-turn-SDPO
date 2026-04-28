@@ -1,13 +1,16 @@
 from scripts.sharded_multiturn import (
     DENSE_CLARIFICATION_REWARD,
+    BRIEF_UNDERSPECIFIED_PREFIX,
     SDPO_REWARD_MODE,
     SampledResponse,
     ShardedTask,
     build_sdpo_teacher_messages,
     contains_environment_impersonation,
     extract_final_answer,
+    initial_messages,
     normalize_reward_mode,
     run_sharded_interaction,
+    shard_message,
     score_final_answer,
     score_sharded_response,
     score_sharded_turn,
@@ -28,6 +31,8 @@ def test_extract_final_answer_from_tags_and_prefix():
     assert extract_final_answer("<final>Clarify: What are the two hidden numbers?</final>") is None
     assert extract_final_answer("reply with <final>...</final>.") is None
     assert extract_final_answer("Reasoning...\nFinal answer:\n<final") is None
+    assert extract_final_answer("The answer is 42.", allow_untagged=True) == "The answer is 42."
+    assert extract_final_answer("What number should I use?", allow_untagged=True) is None
 
 
 def test_score_final_answer_supports_exact_number_and_mcq():
@@ -51,6 +56,34 @@ def test_sharded_task_row_to_messages_uses_default_system():
 
     assert messages[0]["role"] == "system"
     assert messages[1] == {"role": "user", "content": "Add hidden numbers."}
+
+
+def test_minimal_prompt_style_uses_question_only_and_plain_shards():
+    task = ShardedTask(
+        task_id="x",
+        prompt="Add hidden numbers.",
+        shards=["First is 1."],
+        answer="1",
+        kind="number",
+    )
+
+    assert initial_messages(task, prompt_style="minimal") == [{"role": "user", "content": "Add hidden numbers."}]
+    assert shard_message("First is 1.", 0, 1, prompt_style="minimal") == "First is 1."
+
+
+def test_linc_math_prompt_style_matches_upstream_math_shape():
+    task = ShardedTask(
+        task_id="x",
+        prompt="How many apples are left?",
+        shards=["There were 5 apples."],
+        answer="5",
+        kind="number",
+    )
+
+    messages = initial_messages(task, prompt_style="linc_math")
+
+    assert messages[0]["content"].startswith("As an expert problem solver")
+    assert messages[1] == {"role": "user", "content": "Q: How many apples are left?\nA:"}
 
 
 def test_run_sharded_interaction_reveals_shards_until_final():
@@ -77,6 +110,27 @@ def test_run_sharded_interaction_reveals_shards_until_final():
     assert len(rollout.turns) == 3
     assert [score["dense_action"] for score in rollout.turn_scores] == ["clarify", "clarify", "final_answer"]
     assert rollout.transcript[-1]["content"] == "<final>3</final>"
+
+
+def test_run_sharded_interaction_can_score_untagged_final_in_prompt_ablation():
+    task = ShardedTask(
+        task_id="x",
+        prompt="Add hidden numbers.",
+        shards=["First is 1.", "Second is 2."],
+        answer="3",
+        kind="number",
+        allow_untagged_final=True,
+    )
+    responses = iter(["What is the first number?", "What is the second number?", "The answer is 3."])
+
+    rollout = run_sharded_interaction(
+        task,
+        lambda _messages: SampledResponse(text=next(responses)),
+        prompt_style="minimal",
+    )
+
+    assert rollout.reward == 1.0
+    assert rollout.turn_scores[-1]["dense_action"] == "final_answer"
 
 
 def test_score_response_handles_sharded_multiturn_rows():
@@ -262,6 +316,26 @@ def test_build_sdpo_teacher_messages_uses_privileged_context_without_mutating_ro
     assert "Student response on this turn" in joined
     assert "<final>3</final>" in joined
     assert "ask one concise clarifying question" in joined
+
+
+def test_build_sdpo_teacher_messages_supports_brief_prompt_style():
+    task = ShardedTask(
+        task_id="x",
+        prompt="Add hidden numbers.",
+        shards=["First is 1.", "Second is 2."],
+        answer="3",
+        kind="number",
+        full_prompt="Add 1 and 2.",
+    )
+    responses = iter(["<final>1</final>"])
+    rollout = run_sharded_interaction(task, lambda _messages: SampledResponse(text=next(responses)))
+
+    messages = build_sdpo_teacher_messages(rollout, 0, teacher_prompt_style="brief")
+    joined = "\n".join(message["content"] for message in messages)
+
+    assert BRIEF_UNDERSPECIFIED_PREFIX in joined
+    assert "Return only the next assistant message." in joined
+    assert "feedback-conditioned self-teacher" not in joined
 
 
 def test_centered_turn_advantages_aligns_rollouts_by_turn_index():
