@@ -22,15 +22,13 @@ import string
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are solving an underspecified multi-turn task. Ask concise clarifying "
-    "questions when required information is missing. When you have enough "
-    "information, reply with the final answer inside <final_answer>...</final_answer> "
-    "or <final>...</final> XML tags. Only user messages may provide hidden "
-    "details; never invent hidden details or write messages that pretend to "
-    "come from the user."
+DEFAULT_DOMAIN = "general"
+DEFAULT_SYSTEM_PROMPT_TEMPLATE = "As an expert problem solver solve step by step the following {domain} question."
+TEACHER_SYSTEM_PROMPT_SUFFIX = (
+    " There is a chance that the problem is underspecified. Either beforehand "
+    "or during the problem solving process, ask clarifying questions for any "
+    "potentially missing information."
 )
-LINC_MATH_SYSTEM_PROMPT = "As an expert problem solver solve step by step the following mathematical questions."
 BRIEF_UNDERSPECIFIED_PREFIX = (
     "This may be under-specified. If needed, ask a concise clarifying question "
     "before answering."
@@ -38,7 +36,9 @@ BRIEF_UNDERSPECIFIED_PREFIX = (
 DEFAULT_PROMPT_STYLE = "default"
 MINIMAL_PROMPT_STYLE = "minimal"
 LINC_MATH_PROMPT_STYLE = "linc_math"
-DEFAULT_TEACHER_PROMPT_STYLE = "default"
+MINIMAL_TEACHER_PROMPT_STYLE = "minimal_teacher"
+DEFAULT_TEACHER_PROMPT_STYLE = MINIMAL_TEACHER_PROMPT_STYLE
+ENHANCED_TEACHER_PROMPT_STYLE = "enhanced"
 BRIEF_TEACHER_PROMPT_STYLE = "brief"
 
 FINAL_TAG_RE = re.compile(
@@ -90,7 +90,7 @@ class ShardedTask:
     shards: list[str]
     answer: str
     kind: str = "exact"
-    system: str = DEFAULT_SYSTEM_PROMPT
+    system: str = DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(domain=DEFAULT_DOMAIN)
     full_prompt: str | None = None
     allow_untagged_final: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -116,7 +116,7 @@ class ShardedTask:
             shards=shards,
             answer=str(answer),
             kind=kind,
-            system=str(row.get("system") or DEFAULT_SYSTEM_PROMPT),
+            system=str(row.get("system") or DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(domain=DEFAULT_DOMAIN)),
             full_prompt=_optional_str(row.get("full_prompt") or row.get("fully_specified_prompt")),
             allow_untagged_final=allow_untagged_final,
             metadata={k: v for k, v in row.items() if k not in {"prompt", "answer", "shards", "system"}},
@@ -235,31 +235,46 @@ def normalize_prompt_style(style: str | None) -> str:
 
 def normalize_teacher_prompt_style(style: str | None) -> str:
     normalized = (style or DEFAULT_TEACHER_PROMPT_STYLE).strip().lower().replace("-", "_")
-    if normalized in {DEFAULT_TEACHER_PROMPT_STYLE, "verbose"}:
-        return DEFAULT_TEACHER_PROMPT_STYLE
-    if normalized in {BRIEF_TEACHER_PROMPT_STYLE, "minimal", "short"}:
+    if normalized in {DEFAULT_TEACHER_PROMPT_STYLE, "default", "minimal", "short"}:
+        return MINIMAL_TEACHER_PROMPT_STYLE
+    if normalized in {ENHANCED_TEACHER_PROMPT_STYLE, "verbose", "full"}:
+        return ENHANCED_TEACHER_PROMPT_STYLE
+    if normalized in {BRIEF_TEACHER_PROMPT_STYLE}:
         return BRIEF_TEACHER_PROMPT_STYLE
     raise ValueError(f"Unsupported teacher prompt style: {style!r}")
 
 
-def _is_math_task(task: ShardedTask) -> bool:
-    return str(task.metadata.get("source_task") or "").lower() == "math" or task.kind.lower() in {"number", "numeric", "gsm8k"}
+def _domain_for_task(task: ShardedTask) -> str:
+    raw_domain = (
+        task.metadata.get("domain")
+        or task.metadata.get("source_task")
+        or task.metadata.get("task_domain")
+        or task.metadata.get("subject")
+        or task.metadata.get("topic")
+        or ""
+    )
+    normalized = str(raw_domain).strip().lower().replace("_", " ")
+    if normalized in {"", "none"}:
+        normalized = task.kind.lower()
+    if normalized in {"", "none"}:
+        normalized = DEFAULT_DOMAIN
+    if normalized in {"math", "mathematics", "numeric", "number", "gsm8k"}:
+        return "mathematical"
+    return normalized
+
+
+def system_prompt_for_task(task: ShardedTask, include_teacher_suffix: bool = False) -> str:
+    prompt = DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(domain=_domain_for_task(task))
+    if include_teacher_suffix:
+        prompt += TEACHER_SYSTEM_PROMPT_SUFFIX
+    return prompt
 
 
 def initial_messages(task: ShardedTask, prompt_style: str | None = None) -> list[dict[str, str]]:
-    style = normalize_prompt_style(prompt_style)
-    if style == MINIMAL_PROMPT_STYLE:
-        return [{"role": "user", "content": task.prompt}]
-    if style == LINC_MATH_PROMPT_STYLE and _is_math_task(task):
-        return [
-            {"role": "system", "content": LINC_MATH_SYSTEM_PROMPT},
-            {"role": "user", "content": f"Q: {task.prompt}\nA:"},
-        ]
-    if style == LINC_MATH_PROMPT_STYLE:
-        return [{"role": "user", "content": task.prompt}]
+    normalize_prompt_style(prompt_style)
     return [
-        {"role": "system", "content": task.system},
-        {"role": "user", "content": task.prompt},
+        {"role": "system", "content": system_prompt_for_task(task)},
+        {"role": "user", "content": f"Q: {task.prompt}\nA:"},
     ]
 
 
@@ -600,6 +615,18 @@ def build_sdpo_teacher_messages(
     missing = max(len(rollout.task.shards) - revealed, 0)
     style = normalize_teacher_prompt_style(teacher_prompt_style)
 
+    if style == MINIMAL_TEACHER_PROMPT_STYLE:
+        messages = [dict(message) for message in turn.prompt_messages]
+        system_message = {
+            "role": "system",
+            "content": system_prompt_for_task(rollout.task, include_teacher_suffix=True),
+        }
+        if messages and messages[0].get("role") == "system":
+            messages[0] = system_message
+        else:
+            messages.insert(0, system_message)
+        return messages
+
     if missing > 0:
         ideal_behavior = (
             "The student has not yet received all hidden details. The ideal next "
@@ -633,7 +660,10 @@ def build_sdpo_teacher_messages(
             "Return only the next assistant message."
         )
         return [
-            {"role": "system", "content": "Write only the target assistant message."},
+            {
+                "role": "system",
+                "content": system_prompt_for_task(rollout.task, include_teacher_suffix=True),
+            },
             {"role": "user", "content": teacher_user},
         ]
 
@@ -654,10 +684,7 @@ def build_sdpo_teacher_messages(
     return [
         {
             "role": "system",
-            "content": (
-                "You are a precise self-teacher for policy distillation. Produce "
-                "only the target assistant message."
-            ),
+            "content": system_prompt_for_task(rollout.task, include_teacher_suffix=True),
         },
         {"role": "user", "content": teacher_user},
     ]
