@@ -890,6 +890,24 @@ Remaining gaps:
    deciding whether generated-target CE is a useful fallback or simply noisier
    than top-k soft targets.
 
+   Completed generated-target SDPO 30-step eval:
+
+   - run: `lost-math-103-sdpo-generated-w01-shuffle7-30-eval`
+   - reward: `4/10 = 40.0%`
+   - format errors: `2/10 = 20.0%`
+   - comparison to sparse GRPO and first top-k SDPO: tied
+   - comparison to base, dense 30/60-step, and conservative top-k SDPO: `-1/10`
+   - regressed example relative to base/dense/conservative top-k:
+     `sharded-GSM8K/1027`
+   - success set: `sharded-GSM8K/40`, `sharded-GSM8K/543`,
+     `sharded-GSM8K/752`, `sharded-GSM8K/435`
+
+   Interpretation: generated-target CE is not the better Tinker SDPO variant
+   for this pilot. It reproduces the same held-out regression as sparse GRPO and
+   the over-weighted top-k SDPO run. Conservative top-k SDPO remains the best
+   SDPO-style setting tested so far because it preserves the dense-feedback fix
+   for premature final-answer behavior.
+
 6. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
