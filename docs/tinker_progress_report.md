@@ -938,6 +938,26 @@ Remaining gaps:
    Keep the same renderer and decoding settings across all runs so the result
    table remains a fair comparison.
 
+   Completed mixed-split base eval:
+
+   - run: `lost-math-actions-base-test`
+   - reward: `4/21 = 19.05%`
+   - format errors: `4/21 = 19.05%`
+   - math subset: `4/8 = 50.0%`
+   - actions subset: `0/13 = 0.0%`
+   - failures with premature final-answer behavior: `15/21`
+   - format-error examples: `sharded-BFCL/parallel_18`,
+     `sharded-BFCL/parallel_46`, `sharded-GSM8K/214`,
+     `sharded-BFCL/parallel_42`
+   - successful examples: `sharded-GSM8K/435`, `sharded-GSM8K/283`,
+     `sharded-GSM8K/799`, `sharded-GSM8K/140`
+
+   Interpretation: the mixed split exposes a much stronger project-relevant
+   failure mode than the math-only pilot. Base Qwen handles some math examples
+   but fails every held-out actions example, mostly by answering before enough
+   shards are revealed. The next run should be sparse GRPO on this split, then
+   dense RLRF and conservative top-k SDPO under the same 60-step budget.
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or

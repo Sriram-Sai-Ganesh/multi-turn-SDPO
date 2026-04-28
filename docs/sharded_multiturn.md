@@ -519,6 +519,22 @@ NUM_SAMPLES=1 \
 ./run_tinker_eval.sh lost-math-actions-base-test
 ```
 
+Observed mixed base eval:
+
+- run: `lost-math-actions-base-test`
+- reward: `4/21 = 19.05%`
+- format errors: `4/21 = 19.05%`
+- math subset: `4/8 = 50.0%`
+- actions subset: `0/13 = 0.0%`
+- failures with premature final-answer behavior: `15/21`
+- successful examples: `sharded-GSM8K/435`, `sharded-GSM8K/283`,
+  `sharded-GSM8K/799`, `sharded-GSM8K/140`
+
+Interpretation: the mixed split is a better final-project stress test than the
+math-only pilot. Base Qwen solves some math cases but fails every held-out
+actions case, and most failures involve premature final-answer behavior before
+all necessary shards are revealed.
+
 Then run comparable 60-step pilots:
 
 ```bash
