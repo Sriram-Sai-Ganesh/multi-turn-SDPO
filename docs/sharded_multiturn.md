@@ -348,13 +348,34 @@ top-k CE loss has many more supervised token positions than scalar GRPO, the
 next run should use a smaller distillation weight and skip the first few forced
 tokens.
 
+Observed conservative SDPO top-k 30-step training:
+
+- run: `lost-math-103-sdpo-topk-w01-skip3-shuffle7-30`
+- settings: `SDPO_DISTILL_WEIGHT=0.1`, `SDPO_SKIP_FIRST_N_TOKENS=3`
+- train rows used: `30`
+- optimizer steps with trainable signal: `26/30`
+- skipped constant-signal steps: `4/30` (`4`, `10`, `26`, `27`)
+- dense/GRPO assistant-turn datums used: `193`
+- SDPO top-k distillation datums used: `69`
+- SDPO top-k token positions used: `4708`
+- steps with SDPO distillation signal: `24/30`
+- mean training reward across steps: `0.2511`
+- summed SDPO loss scale: `143.1`, down from `2469.7` in the first SDPO
+  top-k 30-step run
+- final sampler checkpoint:
+  `tinker://37083a23-bc06-5f37-bb45-49c19d44d048:train:0/sampler_weights/lost-math-103-sdpo-topk-w01-skip3-shuffle7-30-final-sampler`
+
+This run is the current best SDPO top-k checkpoint candidate because it keeps
+frequent teacher-distillation signal while making the CE term much less likely
+to dominate scalar dense-GRPO signal.
+
 Evaluate the resulting sampler checkpoint with the same sparse held-out metric:
 
 ```bash
 PYTHON_BIN=.venv/bin/python \
 DATA_PATH=datasets/sharded_multiturn/lost_math_200 \
 SPLIT=test \
-MODEL_PATH='tinker://.../sampler_weights/lost-math-103-sdpo-topk-shuffle7-30-final-sampler' \
+MODEL_PATH='tinker://37083a23-bc06-5f37-bb45-49c19d44d048:train:0/sampler_weights/lost-math-103-sdpo-topk-w01-skip3-shuffle7-30-final-sampler' \
 MODEL_NAME=Qwen/Qwen3-8B \
 RENDERER_NAME=qwen3_disable_thinking \
 MAX_TURNS=0 \
@@ -362,7 +383,7 @@ MAX_TOKENS=256 \
 TEMPERATURE=0.0 \
 BATCH_SIZE=1 \
 NUM_SAMPLES=1 \
-./run_tinker_eval.sh lost-math-103-sdpo-topk-shuffle7-30-eval
+./run_tinker_eval.sh lost-math-103-sdpo-topk-w01-skip3-shuffle7-30-eval
 ```
 
 ## Local/JHU Preprocessing

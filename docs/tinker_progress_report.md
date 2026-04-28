@@ -819,6 +819,33 @@ Remaining gaps:
    `SDPO_SKIP_FIRST_N_TOKENS=3`, or explicitly ablate the generated-target
    fallback with `SDPO_TOPK=0`.
 
+   Completed conservative SDPO top-k 30-step training:
+
+   - run: `lost-math-103-sdpo-topk-w01-skip3-shuffle7-30`
+   - setting change from first SDPO pilot: `SDPO_DISTILL_WEIGHT=0.1`,
+     `SDPO_SKIP_FIRST_N_TOKENS=3`
+   - train rows used: `30`
+   - optimizer steps with trainable signal: `26/30`
+   - skipped constant-signal steps: `4/30` (`4`, `10`, `26`, `27`)
+   - dense/GRPO assistant-turn datums used: `193`
+   - SDPO top-k distillation datums used: `69`
+   - SDPO top-k token positions used: `4708`
+   - steps with any SDPO distillation signal: `24/30`
+   - steps with any dense/GRPO signal: `22/30`
+   - SDPO-only optimizer steps: `4` (`12`, `14`, `24`, `29`)
+   - mean training reward across steps: `0.2511`
+   - first-half mean training reward: `0.2607`
+   - second-half mean training reward: `0.2414`
+   - summed SDPO loss scale: `143.1`, down from `2469.7` in the
+     `SDPO_DISTILL_WEIGHT=1.0` run
+   - final sampler checkpoint:
+     `tinker://37083a23-bc06-5f37-bb45-49c19d44d048:train:0/sampler_weights/lost-math-103-sdpo-topk-w01-skip3-shuffle7-30-final-sampler`
+
+   Interpretation: the conservative run still exercised SDPO frequently but
+   reduced the top-k CE loss scale by roughly an order of magnitude relative to
+   the first SDPO pilot. This is the correct next checkpoint to evaluate before
+   trying the `SDPO_TOPK=0` generated-target ablation.
+
 6. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
