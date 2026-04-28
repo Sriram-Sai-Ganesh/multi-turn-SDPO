@@ -471,6 +471,96 @@ over-weighted top-k SDPO run. Conservative top-k SDPO remains the best
 SDPO-style setting tested so far because it preserves the dense-feedback fix for
 premature final-answer behavior.
 
+## Mixed Math/Actions Split
+
+The math-only split is useful for debugging, but its `10`-row test split is too
+small for final-project claims. The next comparison uses all currently
+convertible Lost-in-Conversation tasks:
+
+```bash
+./.venv/bin/python scripts/convert_lost_in_conversation.py \
+  --source microsoft/lost_in_conversation \
+  --split train \
+  --output-dir datasets/sharded_multiturn/lost_math_actions_200 \
+  --max-records 208 \
+  --train-ratio 0.9 \
+  --seed 42
+
+HF_HOME=.cache/huggingface ./.venv/bin/python data/preprocess.py \
+  --data_source datasets/sharded_multiturn/lost_math_actions_200
+```
+
+Observed conversion:
+
+- converted rows: `208`
+- train rows: `187`
+- test rows: `21`
+- tasks: `actions`, `math`
+- train task mix: `95` math, `92` actions
+- test task mix: `8` math, `13` actions
+- hidden shards per row: train `3` to `11`, test `3` to `7`
+
+The JSON files are committed for Tinker runs. The parquet files are ignored by
+git and should be regenerated locally/JHU with the preprocessing command above.
+
+Run the mixed base eval first:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_actions_200 \
+SPLIT=test \
+MODEL_NAME=Qwen/Qwen3-8B \
+RENDERER_NAME=qwen3_disable_thinking \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+TEMPERATURE=0.0 \
+BATCH_SIZE=1 \
+NUM_SAMPLES=1 \
+./run_tinker_eval.sh lost-math-actions-base-test
+```
+
+Then run comparable 60-step pilots:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_actions_200 \
+RENDERER_NAME=qwen3_disable_thinking \
+SHUFFLE_SEED=7 \
+MAX_STEPS=60 \
+BATCH_SIZE=1 \
+ROLLOUT_N=4 \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+./run_tinker_grpo.sh lost-math-actions-sparse-grpo-shuffle7-60
+
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_actions_200 \
+RENDERER_NAME=qwen3_disable_thinking \
+SHARDED_REWARD_MODE=dense \
+SHUFFLE_SEED=7 \
+MAX_STEPS=60 \
+BATCH_SIZE=1 \
+ROLLOUT_N=4 \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+./run_tinker_grpo.sh lost-math-actions-dense-rlrf-shuffle7-60
+
+PYTHON_BIN=.venv/bin/python \
+DATA_PATH=datasets/sharded_multiturn/lost_math_actions_200 \
+RENDERER_NAME=qwen3_disable_thinking \
+SHARDED_REWARD_MODE=sdpo \
+SDPO_TOPK=20 \
+SDPO_DISTILL_WEIGHT=0.1 \
+SDPO_SKIP_FIRST_N_TOKENS=3 \
+SHUFFLE_SEED=7 \
+MAX_STEPS=60 \
+BATCH_SIZE=1 \
+ROLLOUT_N=4 \
+MAX_TURNS=0 \
+MAX_TOKENS=256 \
+./run_tinker_grpo.sh lost-math-actions-sdpo-topk-w01-skip3-shuffle7-60
+```
+
 ## Local/JHU Preprocessing
 
 The standard parquet preprocessing path accepts the same JSON schema:

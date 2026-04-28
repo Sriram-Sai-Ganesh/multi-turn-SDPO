@@ -908,7 +908,37 @@ Remaining gaps:
    SDPO-style setting tested so far because it preserves the dense-feedback fix
    for premature final-answer behavior.
 
-6. Run a minimal local/JHU smoke test.
+6. Scale the next comparison to a mixed task split.
+
+   Created `datasets/sharded_multiturn/lost_math_actions_200` from cached
+   `microsoft/lost_in_conversation` rows with no task filter. The converter can
+   currently score `math` and `actions` rows, which gives a larger and more
+   proposal-aligned split than math alone:
+
+   - converted rows: `208`
+   - train rows: `187`
+   - test rows: `21`
+   - train task mix: `95` math, `92` actions
+   - test task mix: `8` math, `13` actions
+   - hidden shards per row: train `3` to `11`, test `3` to `7`
+   - JSON files are committed; parquet files can be regenerated with
+     `HF_HOME=.cache/huggingface ./.venv/bin/python data/preprocess.py --data_source datasets/sharded_multiturn/lost_math_actions_200`
+
+   This is the right next project step because it tests whether the dense/SDPO
+   behavior survives a task-type shift instead of only tuning on the 10-example
+   math held-out set.
+
+   Recommended run order:
+
+   1. Base Qwen eval on the 21-row mixed test split.
+   2. Sparse GRPO 60-step pilot on the mixed train split.
+   3. Dense RLRF 60-step pilot on the same mixed train split.
+   4. Conservative top-k SDPO 60-step pilot on the same mixed train split.
+
+   Keep the same renderer and decoding settings across all runs so the result
+   table remains a fair comparison.
+
+7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
    depending on this branch broadly, run a short JHU job to confirm the original
