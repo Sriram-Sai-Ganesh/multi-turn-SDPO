@@ -260,6 +260,23 @@ MAX_TOKENS=256 \
 ./run_tinker_grpo.sh lost-math-103-sdpo-topk-shuffle7-smoke
 ```
 
+Observed SDPO top-k smoke:
+
+- run: `lost-math-103-sdpo-topk-shuffle7-smoke`
+- train rows used: `5`
+- optimizer steps with trainable signal: `4/5`
+- skipped constant-signal steps: `1/5`
+- dense/GRPO assistant-turn datums used: `30`
+- SDPO top-k distillation datums used: `7`
+- SDPO top-k token positions used: `362`
+- final sampler checkpoint:
+  `tinker://eee8cb04-5b63-54ce-8138-917dac3ea139:train:0/sampler_weights/lost-math-103-sdpo-topk-shuffle7-smoke-final-sampler`
+
+The smoke validates that Tinker can run the combined objective. In top-k mode
+the log field `teacher_response` is intentionally empty because the teacher is
+not sampled for text; it is teacher-forced over the student's sampled turn and
+used for soft next-token targets.
+
 Pilot command:
 
 ```bash

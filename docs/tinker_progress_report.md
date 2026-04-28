@@ -742,6 +742,27 @@ Remaining gaps:
    ./run_tinker_grpo.sh lost-math-103-sdpo-topk-shuffle7-smoke
    ```
 
+   Completed SDPO top-k smoke:
+
+   - run: `lost-math-103-sdpo-topk-shuffle7-smoke`
+   - train rows used: `5`
+   - reward means by step: `0.2333`, `0.3542`, `0.2500`, `0.1557`, `0.4000`
+   - optimizer steps with trainable signal: `4/5`
+   - skipped constant-signal steps: `1/5`
+   - dense/GRPO assistant-turn datums used: `30`
+   - SDPO top-k distillation datums used: `7`
+   - SDPO top-k token positions used: `362`
+   - steps with SDPO distillation signal: `3/5`
+   - final sampler checkpoint:
+     `tinker://eee8cb04-5b63-54ce-8138-917dac3ea139:train:0/sampler_weights/lost-math-103-sdpo-topk-shuffle7-smoke-final-sampler`
+
+   Interpretation: this validates the combined Tinker objective end to end.
+   The run exercised dense sharded GRPO and feedback-conditioned top-k
+   self-teacher distillation in the same training loop. It is a smoke test, not
+   evidence of held-out improvement yet. The next step is to evaluate this smoke
+   checkpoint and then run a 30-step SDPO pilot if the checkpoint eval does not
+   show a severe regression.
+
 6. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
