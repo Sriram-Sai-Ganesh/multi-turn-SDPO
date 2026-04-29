@@ -1008,6 +1008,29 @@ Remaining gaps:
    strengthens the case for dense RLRF-style feedback and SDPO-style feedback
    distillation under the same minimal student prompt.
 
+   Completed minimal-prompt dense/RLRF 60-step pilot:
+
+   - training run: `lost-math-actions-dense-rlrf-minimal-shuffle7-60`
+   - eval run: `lost-math-actions-dense-rlrf-minimal-shuffle7-60-eval`
+   - reward: `5/21 = 23.81%`
+   - format errors: `1/21 = 4.76%`
+   - trainable RL steps: `48/60`
+   - skipped optimizer steps: `12/60`
+   - trainable samples used: `596`
+   - held-out math subset: `5/8 = 62.5%`
+   - held-out actions subset: `0/13 = 0.0%`
+   - successful examples: `sharded-GSM8K/435`, `sharded-GSM8K/1187`,
+     `sharded-GSM8K/799`, `sharded-GSM8K/140`, `sharded-GSM8K/1113`
+
+   Interpretation: dense/RLRF is the first clean-prompt method to beat both
+   base Qwen and sparse GRPO on the mixed held-out split (`+1/21`). It also
+   produces much more training signal than sparse terminal reward
+   (`48/60` trainable steps versus `13/60`). The gain is still limited to math
+   examples; every held-out actions example remains unsolved. This means the
+   result supports the dense-feedback direction, but the next decisive test is
+   SDPO-style feedback distillation or a stronger action-specific feedback
+   signal under the same minimal student prompt.
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
