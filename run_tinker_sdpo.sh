@@ -1,0 +1,38 @@
+#!/bin/bash
+set -euo pipefail
+
+# Usage: ./run_tinker_sdpo [run_name]
+#
+# Required:
+#   export TINKER_API_KEY=...
+#
+# Common overrides:
+#   MODEL_NAME, DATA_PATH, BATCH_SIZE, ROLLOUT_N, MAX_STEPS, MAX_TURNS,
+#   MAX_TOKENS, TEMPERATURE, LR, LORA_RANK, RENDERER_NAME, TINKER_BASE_URL,
+#   SHUFFLE_SEED, SDPO_DISTILL_WEIGHT, SDPO_TOPK,
+#   SDPO_SKIP_FIRST_N_TOKENS, SDPO_MAX_TEACHER_TOKENS,
+#   SDPO_TEACHER_TEMPERATURE, SDPO_DISTILL_ON, SHARDED_PROMPT_STYLE,
+#   SHARDED_ALLOW_UNTAGGED_FINAL, SDPO_TEACHER_PROMPT_STYLE, TINKER_SDPO_LOG_DIR
+
+export PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
+
+if [ -z "${TINKER_API_KEY:-}" ]; then
+    echo "TINKER_API_KEY is not set. Export it in your shell; do not put it in the repo."
+    exit 1
+fi
+
+RUN_NAME="${1:-${RUN_NAME:-tinker-sdpo-smoke}}"
+export RUN_NAME
+
+export SHARDED_REWARD_MODE="sdpo"
+export SDPO_TOPK="${SDPO_TOPK:-20}"
+export SDPO_DISTILL_WEIGHT="${SDPO_DISTILL_WEIGHT:-0.1}"
+export SDPO_SKIP_FIRST_N_TOKENS="${SDPO_SKIP_FIRST_N_TOKENS:-3}"
+export SDPO_MAX_TEACHER_TOKENS="${SDPO_MAX_TEACHER_TOKENS:-256}"
+export SDPO_TEACHER_TEMPERATURE="${SDPO_TEACHER_TEMPERATURE:-0.0}"
+export SDPO_DISTILL_ON="${SDPO_DISTILL_ON:-failed}"
+export SDPO_TEACHER_PROMPT_STYLE="${SDPO_TEACHER_PROMPT_STYLE:-minimal_teacher}"
+export TINKER_LOG_DIR="${TINKER_SDPO_LOG_DIR:-$PROJECT_ROOT/_logs/tinker_sdpo}"
+
+exec "$PROJECT_ROOT/run_tinker_grpo.sh" "$RUN_NAME"
