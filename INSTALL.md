@@ -91,6 +91,7 @@ export TINKER_API_KEY="..."
 Run a one-step smoke job on the bundled ToolUse data:
 
 ```bash
+./run_tinker_sft.sh tinker-sft-smoke
 ./run_tinker_grpo.sh tinker-smoke
 ```
 
@@ -108,7 +109,9 @@ The eval launcher expects sampler weights. If given a `/weights/` training
 checkpoint, it exports temporary sampler weights first.
 
 The same Tinker launchers also support the final-project sharded multi-turn
-format via rows with `"dataset": "sharded_multiturn"`. See
+datasets. The SFT baseline expands each sharded row into synthetic
+clarification turns plus a final tagged answer for rows with
+`"dataset": "sharded_multiturn"`. See
 `docs/sharded_multiturn.md` for the JSON schema and smoke commands.
 
 # Verification
