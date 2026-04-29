@@ -237,6 +237,18 @@ Export your key in the shell. Do not put it in a tracked file:
 export TINKER_API_KEY="..."
 ```
 
+Run the default one-step SFT smoke job on `datasets/tooluse`:
+
+```bash
+./run_tinker_sft.sh tinker-sft-smoke
+```
+
+Common overrides:
+
+```bash
+MODEL_NAME=Qwen/Qwen3-8B DATA_PATH=datasets/tooluse BATCH_SIZE=1 MAX_STEPS=1 ./run_tinker_sft.sh tinker-sft-smoke
+```
+
 Run the default one-step GRPO smoke job on `datasets/tooluse`:
 
 ```bash
@@ -270,9 +282,9 @@ Use the `/sampler_weights/` path printed by the training runner for eval. If you
 pass a `/weights/` training checkpoint, the eval script will first export
 sampler weights automatically.
 
-The Tinker runners live in `scripts/tinker_grpo.py` and `scripts/tinker_eval.py`
-and reuse this repo's JSON datasets plus `verl.utils.reward_score.feedback`
-reward functions.
+The Tinker runners live in `scripts/tinker_sft.py`, `scripts/tinker_grpo.py`,
+and `scripts/tinker_eval.py`. They reuse this repo's JSON datasets plus
+`verl.utils.reward_score.feedback` reward functions.
 
 For the final-project multi-turn task, rows with
 `"dataset": "sharded_multiturn"` are treated as sharded underspecified
@@ -280,6 +292,11 @@ conversations. The runner samples multiple assistant turns, reveals one hidden
 shard after each non-final turn, and applies terminal sparse reward to the
 assistant turns in that trajectory. See `docs/sharded_multiturn.md` for the row
 format and smoke commands.
+
+For a supervised baseline on the same sharded data, the Tinker SFT runner
+expands each row into synthetic demonstrations: one generic clarifying question
+per hidden shard, followed by a final tagged answer after all shards have been
+revealed.
 
 For the dense-feedback final-project pilot, keep sparse reward as the baseline
 and opt into per-turn RLRF-style reward shaping:
