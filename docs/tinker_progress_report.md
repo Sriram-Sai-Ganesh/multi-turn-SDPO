@@ -1042,6 +1042,28 @@ Remaining gaps:
    SDPO-style feedback distillation or a stronger action-specific feedback
    signal under the same minimal student prompt.
 
+   Completed minimal-prompt SDPO 60-step pilot:
+
+   - training run: `lost-math-actions-sdpo-brief-w01-skip3-minimal-shuffle7-60`
+   - eval run: `lost-math-actions-sdpo-brief-w01-skip3-minimal-shuffle7-60-eval`
+   - reward: `3/21 = 14.29%`
+   - format errors: `3/21 = 14.29%`
+   - trainable steps: `60/60`
+   - skipped optimizer steps: `0/60`
+   - RL samples used: `600`
+   - SDPO distillation samples used: `179`
+   - held-out math subset: `3/8 = 37.5%`
+   - held-out actions subset: `0/13 = 0.0%`
+   - successful examples: `sharded-GSM8K/359`, `sharded-GSM8K/140`,
+     `sharded-GSM8K/1113`
+
+   Interpretation: conservative top-k SDPO gives the best training coverage but
+   the worst clean-prompt held-out result in this mixed pilot. The current
+   feedback-distillation target is therefore not reliably transferring to
+   better final-task behavior. The strongest current result remains dense/RLRF
+   without SDPO (`5/21`), and the remaining bottleneck is the actions subset,
+   where all methods are still `0/13`.
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
