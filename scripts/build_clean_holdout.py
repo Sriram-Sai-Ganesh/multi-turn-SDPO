@@ -47,6 +47,28 @@ def collect_excluded_ids(paths: list[str]) -> set[str]:
     return excluded
 
 
+def load_source_records(source: str, split: str) -> list[dict[str, Any]]:
+    path = Path(source)
+    if path.is_dir() and split.lower() in {"all", "both", "train_test"}:
+        records: list[dict[str, Any]] = []
+        for name in ("train.json", "test.json"):
+            candidate = path / name
+            if candidate.exists():
+                records.extend(load_json_records(candidate))
+        if not records:
+            raise FileNotFoundError(f"No train.json or test.json found in {path}")
+        return records
+    return load_records(source, split)
+
+
+def normalize_record(row: dict[str, Any]) -> dict[str, Any] | None:
+    if str(row.get("dataset")) == "sharded_multiturn":
+        if row.get("idx") in (None, "") or row.get("answer") in (None, ""):
+            return None
+        return dict(row)
+    return convert_record(row)
+
+
 def build_holdout(
     rows: list[dict[str, Any]],
     task_filter: set[str],
@@ -61,10 +83,10 @@ def build_holdout(
     seen_ids: set[str] = set()
 
     for row in rows:
-        task = str(row.get("task") or row.get("task_type") or "unknown").lower()
+        task = str(row.get("task") or row.get("task_type") or row.get("source_task") or "unknown").lower()
         if task_filter and task not in task_filter:
             continue
-        record = convert_record(row)
+        record = normalize_record(row)
         if record is None:
             skipped += 1
             continue
@@ -120,7 +142,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     task_filter = {task.lower() for task in (args.task or ["math", "actions"])}
-    rows = load_records(args.source, args.split)
+    rows = load_source_records(args.source, args.split)
     excluded_ids = collect_excluded_ids(args.exclude_json)
     records, summary = build_holdout(
         rows=rows,

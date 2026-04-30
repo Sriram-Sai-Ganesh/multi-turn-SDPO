@@ -29,15 +29,19 @@ if [ -z "${TINKER_API_KEY:-}" ]; then
 fi
 
 RUN_PREFIX="${RUN_PREFIX:-lost-math-actions-tools-clean-holdout}"
-SOURCE="${SOURCE:-microsoft/lost_in_conversation}"
-SOURCE_SPLIT="${SOURCE_SPLIT:-train}"
 HOLDOUT_SEED="${HOLDOUT_SEED:-101}"
 MAX_HOLDOUT_RECORDS="${MAX_HOLDOUT_RECORDS:-0}"
 HOLDOUT_DIR="${HOLDOUT_DIR:-$PROJECT_ROOT/_logs/holdouts/$RUN_PREFIX}"
 EVAL_LOG_DIR="${TINKER_EVAL_LOG_DIR:-$PROJECT_ROOT/_logs/tinker_eval}"
 
 REFERENCE_SPLIT_DIR="${REFERENCE_SPLIT_DIR:-$PROJECT_ROOT/datasets/sharded_multiturn/lost_math_actions_tools_200}"
+SOURCE="${SOURCE:-$REFERENCE_SPLIT_DIR}"
+SOURCE_SPLIT="${SOURCE_SPLIT:-all}"
 EXCLUDE_CURRENT_TEST="${EXCLUDE_CURRENT_TEST:-1}"
+EXCLUDE_ACTUAL_DENSE_TRAIN="${EXCLUDE_ACTUAL_DENSE_TRAIN:-1}"
+DENSE_TRAIN_SHUFFLE_SEED="${DENSE_TRAIN_SHUFFLE_SEED:-7}"
+DENSE_TRAIN_MAX_STEPS="${DENSE_TRAIN_MAX_STEPS:-60}"
+DENSE_TRAIN_BATCH_SIZE="${DENSE_TRAIN_BATCH_SIZE:-1}"
 
 MODEL_NAME="${MODEL_NAME:-Qwen/Qwen3-8B}"
 RENDERER_NAME="${RENDERER_NAME:-qwen3_disable_thinking}"
@@ -91,6 +95,36 @@ run_with_retries() {
 }
 
 build_holdout() {
+    local exclude_args=()
+    if [ "$EXCLUDE_ACTUAL_DENSE_TRAIN" = "1" ] || [ "$EXCLUDE_ACTUAL_DENSE_TRAIN" = "true" ]; then
+        local trained_ids_json="$HOLDOUT_DIR/exclude_dense_train_ids.json"
+        "$PYTHON_BIN" - <<'PY' "$REFERENCE_SPLIT_DIR/train.json" "$trained_ids_json" "$DENSE_TRAIN_SHUFFLE_SEED" "$DENSE_TRAIN_MAX_STEPS" "$DENSE_TRAIN_BATCH_SIZE"
+import json
+import random
+import sys
+from pathlib import Path
+
+train_path = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+seed = int(sys.argv[3])
+max_steps = int(sys.argv[4])
+batch_size = int(sys.argv[5])
+rows = json.loads(train_path.read_text(encoding="utf-8"))
+rng = random.Random(seed)
+rng.shuffle(rows)
+used = rows[: min(len(rows), max_steps * batch_size)]
+output_path.parent.mkdir(parents=True, exist_ok=True)
+output_path.write_text(json.dumps([{"idx": row["idx"]} for row in used], indent=2) + "\n", encoding="utf-8")
+print(f"Wrote {len(used)} dense-training exclusion IDs to {output_path}")
+PY
+        exclude_args+=(--exclude-json "$trained_ids_json")
+    else
+        exclude_args+=(--exclude-json "$REFERENCE_SPLIT_DIR/train.json")
+    fi
+    if [ "$EXCLUDE_CURRENT_TEST" = "1" ] || [ "$EXCLUDE_CURRENT_TEST" = "true" ]; then
+        exclude_args+=(--exclude-json "$REFERENCE_SPLIT_DIR/test.json")
+    fi
+
     local args=(
         "$PYTHON_BIN" "$PROJECT_ROOT/scripts/build_clean_holdout.py"
         --source "$SOURCE"
@@ -100,11 +134,8 @@ build_holdout() {
         --max-records "$MAX_HOLDOUT_RECORDS"
         --task math
         --task actions
-        --exclude-json "$REFERENCE_SPLIT_DIR/train.json"
+        "${exclude_args[@]}"
     )
-    if [ "$EXCLUDE_CURRENT_TEST" = "1" ] || [ "$EXCLUDE_CURRENT_TEST" = "true" ]; then
-        args+=(--exclude-json "$REFERENCE_SPLIT_DIR/test.json")
-    fi
     "${args[@]}"
 }
 
@@ -143,7 +174,9 @@ DENSE_METRICS="$EVAL_LOG_DIR/$DENSE_RUN-metrics.json"
 log "Large clean holdout eval started"
 log "Holdout dir: $HOLDOUT_DIR"
 log "Run prefix: $RUN_PREFIX"
+log "Source: $SOURCE ($SOURCE_SPLIT)"
 log "Exclude current test: $EXCLUDE_CURRENT_TEST"
+log "Exclude actual dense train rows: $EXCLUDE_ACTUAL_DENSE_TRAIN"
 
 if [ "$RESUME" = "1" ] && [ -s "$HOLDOUT_DIR/test.json" ] && [ -s "$HOLDOUT_DIR/holdout_summary.json" ]; then
     log "Skipping holdout build; existing holdout found."
