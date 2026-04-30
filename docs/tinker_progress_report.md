@@ -1125,6 +1125,27 @@ Remaining gaps:
    The next sparse, dense/RLRF, SDPO, and SFT comparisons should use this
    dataset, prompt style, scoring code, and run as the base reference.
 
+   Completed corrected-split sparse-GRPO baseline:
+
+   - training run: `lost-math-actions-tools-sparse-grpo-shuffle7-60`
+   - eval run: `lost-math-actions-tools-sparse-grpo-shuffle7-60-eval`
+   - reward: `4/21 = 19.05%`
+   - format errors: `5/21 = 23.81%`
+   - trainable RL steps: `20/60`
+   - skipped optimizer steps: `40/60`
+   - trainable samples used: `472`
+   - math subset: `2/8 = 25.0%`
+   - actions subset: `2/13 = 15.38%`
+   - successful action examples: `sharded-BFCL/parallel_144`,
+     `sharded-BFCL/parallel_195`
+   - successful math examples: `sharded-GSM8K/799`, `sharded-GSM8K/1113`
+
+   Interpretation: sparse GRPO still regresses relative to the corrected base
+   (`4/21` versus `5/21`). It preserves the two base action successes but loses
+   one math example, and two-thirds of optimizer steps are skipped because the
+   terminal reward often produces no non-zero advantages. This keeps dense/RLRF
+   as the main method to evaluate next.
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
