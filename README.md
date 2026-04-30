@@ -298,6 +298,12 @@ expands each row into synthetic demonstrations: one generic clarifying question
 per hidden shard, followed by a final tagged answer after all shards have been
 revealed.
 
+For mixed math+actions Lost-in-Conversation splits, use
+`SHARDED_PROMPT_STYLE=tool_schema` on datasets that preserve the upstream
+`functions` field, such as
+`datasets/sharded_multiturn/lost_math_actions_tools_200`. This gives the model
+the BFCL/action function schemas without revealing hidden shards.
+
 For the dense-feedback final-project pilot, keep sparse reward as the baseline
 and opt into per-turn RLRF-style reward shaping:
 

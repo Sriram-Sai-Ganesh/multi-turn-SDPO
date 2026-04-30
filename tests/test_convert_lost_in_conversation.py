@@ -29,6 +29,44 @@ def test_convert_lost_in_conversation_math_record():
     }
 
 
+def test_convert_record_preserves_action_function_metadata():
+    row = {
+        "task_id": "sharded-BFCL/parallel_144",
+        "task": "actions",
+        "function": [
+            {
+                "name": "math.factorial",
+                "description": "Calculate the factorial of a given number.",
+                "parameters": {
+                    "type": "dict",
+                    "properties": {"number": {"type": "integer"}},
+                    "required": ["number"],
+                },
+            }
+        ],
+        "language": "Python",
+        "test_category": "parallel",
+        "shards": [
+            {"shard_id": 1, "shard": "What is the factorial of 5?"},
+            {"shard_id": 2, "shard": "Now calculate the factorial of 3"},
+        ],
+        "reference_answer": [{"math.factorial": {"number": [5]}}],
+        "fully_specified_question": [[{"role": "user", "content": "Calculate factorials."}]],
+    }
+
+    record = convert_record(row)
+
+    assert record is not None
+    assert record["idx"] == "sharded-BFCL/parallel_144"
+    assert record["source_task"] == "actions"
+    assert record["kind"] == "tool_call"
+    assert record["prompt"] == "What is the factorial of 5?"
+    assert record["shards"] == ["Now calculate the factorial of 3"]
+    assert record["functions"][0]["name"] == "math.factorial"
+    assert record["language"] == "Python"
+    assert record["test_category"] == "parallel"
+
+
 def test_convert_lost_in_conversation_skips_records_without_answer():
     row = {
         "task_id": "x",

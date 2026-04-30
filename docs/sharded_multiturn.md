@@ -550,6 +550,10 @@ compatibility, but the student prompt shape is now intentionally unified:
   text.
 - `SHARDED_PROMPT_STYLE=linc_math`: same minimal domain system prompt plus
   `Q: ... A:` initial user message.
+- `SHARDED_PROMPT_STYLE=tool_schema`: for rows with available function
+  metadata, include the function schemas and the expected JSON call format in
+  the initial user message. This does not reveal hidden shards; it only restores
+  the action/tool interface from the original Lost-in-Conversation BFCL rows.
 - `SHARDED_ALLOW_UNTAGGED_FINAL=1`: score untagged non-question responses as
   final-answer attempts. This is useful because the minimal prompt no longer
   tells the model to use XML tags.
@@ -579,6 +583,14 @@ BATCH_SIZE=1 \
 NUM_SAMPLES=1 \
 ./run_tinker_eval.sh lost-math-actions-base-minimal-untagged-test
 ```
+
+For mixed math+actions runs, use the corrected tool-schema split:
+`datasets/sharded_multiturn/lost_math_actions_tools_200`. It preserves the same
+train/test IDs as `lost_math_actions_200`, but action rows now keep upstream
+function schemas and use `kind=tool_call` scoring. Use
+`SHARDED_PROMPT_STYLE=tool_schema` for this split so BFCL/action rows are
+evaluated against the intended function-call interface rather than against an
+unstated JSON format.
 
 If this minimal-prompt base result is much stronger than the default-prompt
 base, then prompt scaffolding is a major confound and the main result table

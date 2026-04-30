@@ -19,7 +19,7 @@ TASK_TO_KIND = {
     "math": "number",
     "code": "exact",
     "database": "exact",
-    "actions": "exact",
+    "actions": "tool_call",
     "data2text": "exact",
     "summary": "contains",
     "translation": "exact",
@@ -155,6 +155,14 @@ def infer_full_prompt(row: dict[str, Any], shards: list[str]) -> str:
     return "\n".join(shards)
 
 
+def infer_functions(row: dict[str, Any]) -> Any:
+    for key in ("functions", "function", "tools"):
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
 def convert_record(row: dict[str, Any]) -> dict[str, Any] | None:
     shards = ordered_shards(row)
     if len(shards) < 2:
@@ -164,7 +172,7 @@ def convert_record(row: dict[str, Any]) -> dict[str, Any] | None:
         return None
     task = str(row.get("task") or row.get("task_type") or "unknown")
     fallback_id = hashlib.sha1(json.dumps(row, sort_keys=True).encode("utf-8")).hexdigest()[:12]
-    return {
+    record = {
         "idx": str(row.get("task_id") or row.get("idx") or row.get("id") or f"lost-{fallback_id}"),
         "dataset": "sharded_multiturn",
         "kind": TASK_TO_KIND.get(task, "exact"),
@@ -174,6 +182,13 @@ def convert_record(row: dict[str, Any]) -> dict[str, Any] | None:
         "answer": answer,
         "full_prompt": infer_full_prompt(row, shards),
     }
+    functions = infer_functions(row)
+    if functions is not None:
+        record["functions"] = functions
+    for key in ("language", "test_category"):
+        if row.get(key) not in (None, ""):
+            record[key] = row[key]
+    return record
 
 
 def split_records(records: list[dict[str, Any]], train_ratio: float, seed: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

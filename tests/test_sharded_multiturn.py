@@ -6,6 +6,7 @@ from scripts.sharded_multiturn import (
     SDPO_REWARD_MODE,
     SampledResponse,
     ShardedTask,
+    TOOL_SCHEMA_PROMPT_STYLE,
     build_sdpo_teacher_messages,
     contains_environment_impersonation,
     extract_final_answer,
@@ -16,6 +17,7 @@ from scripts.sharded_multiturn import (
     score_final_answer,
     score_sharded_response,
     score_sharded_turn,
+    score_tool_call_answer,
     rollout_training_reward,
     rollout_training_rewards,
     select_sdpo_distillation_turn,
@@ -43,6 +45,23 @@ def test_score_final_answer_supports_exact_number_and_mcq():
     assert score_final_answer("The answer is 5.", "5", "number")["score"] == 1.0
     assert score_final_answer("I choose B", "B", "mcq")["score"] == 1.0
     assert score_final_answer(None, "B", "mcq")["incorrect_format"] == 1
+
+
+def test_score_tool_call_answer_accepts_reference_argument_variants():
+    reference = (
+        '{"concert_finder": {"location": ["San Francisco, California", "San Francisco, CA"], '
+        '"music_genre": ["rock"], "time_period": [30, ""]}}'
+    )
+    prediction = '{"concert_finder": {"location": "San Francisco, CA", "music_genre": "rock", "time_period": 30}}'
+
+    assert score_tool_call_answer(prediction, reference)["score"] == 1.0
+
+
+def test_score_tool_call_answer_matches_multiple_json_lines_order_insensitively():
+    reference = '{"math.factorial": {"number": [5]}}\n{"math.factorial": {"number": [3]}}'
+    prediction = '{"math.factorial": {"number": [3]}}\n{"math.factorial": {"number": [5]}}'
+
+    assert score_final_answer(prediction, reference, "tool_call")["score"] == 1.0
 
 
 def test_sharded_task_row_to_messages_uses_default_system():
@@ -92,6 +111,40 @@ def test_linc_math_prompt_style_uses_minimal_math_prompt_shape():
 
     assert messages[0]["content"] == "As an expert problem solver solve step by step the following mathematical question."
     assert messages[1] == {"role": "user", "content": "Q: How many apples are left?\nA:"}
+
+
+def test_tool_schema_prompt_style_includes_available_functions_without_hidden_shards():
+    task = ShardedTask(
+        task_id="x",
+        prompt="What is the factorial of 5?",
+        shards=["Now calculate the factorial of 3"],
+        answer='{"math.factorial": {"number": [5]}}',
+        kind="exact",
+        metadata={
+            "source_task": "actions",
+            "functions": [
+                {
+                    "name": "math.factorial",
+                    "description": "Calculate the factorial of a given number.",
+                    "parameters": {
+                        "type": "dict",
+                        "properties": {"number": {"type": "integer"}},
+                        "required": ["number"],
+                    },
+                }
+            ],
+        },
+    )
+
+    messages = initial_messages(task, prompt_style="tool_schema")
+    user_content = messages[1]["content"]
+
+    assert TOOL_SCHEMA_PROMPT_STYLE == "tool_schema"
+    assert "Available functions:" in user_content
+    assert "math.factorial" in user_content
+    assert '{"function.name": {"argument": [value]}}' in user_content
+    assert "What is the factorial of 5?" in user_content
+    assert "Now calculate the factorial of 3" not in user_content
 
 
 def test_run_sharded_interaction_reveals_shards_until_final():

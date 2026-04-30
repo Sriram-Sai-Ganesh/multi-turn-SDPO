@@ -36,6 +36,7 @@ BRIEF_UNDERSPECIFIED_PREFIX = (
 DEFAULT_PROMPT_STYLE = "default"
 MINIMAL_PROMPT_STYLE = "minimal"
 LINC_MATH_PROMPT_STYLE = "linc_math"
+TOOL_SCHEMA_PROMPT_STYLE = "tool_schema"
 MINIMAL_TEACHER_PROMPT_STYLE = "minimal_teacher"
 DEFAULT_TEACHER_PROMPT_STYLE = MINIMAL_TEACHER_PROMPT_STYLE
 ENHANCED_TEACHER_PROMPT_STYLE = "enhanced"
@@ -230,6 +231,8 @@ def normalize_prompt_style(style: str | None) -> str:
         return MINIMAL_PROMPT_STYLE
     if normalized in {LINC_MATH_PROMPT_STYLE, "paper_math", "lost_in_conversation_math"}:
         return LINC_MATH_PROMPT_STYLE
+    if normalized in {TOOL_SCHEMA_PROMPT_STYLE, "tools", "tool", "action_schema", "function_schema"}:
+        return TOOL_SCHEMA_PROMPT_STYLE
     raise ValueError(f"Unsupported sharded prompt style: {style!r}")
 
 
@@ -270,11 +273,50 @@ def system_prompt_for_task(task: ShardedTask, include_teacher_suffix: bool = Fal
     return prompt
 
 
+def _coerce_tool_functions(value: Any) -> list[Any]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return value
+    return []
+
+
+def tool_functions_for_task(task: ShardedTask) -> list[Any]:
+    return (
+        _coerce_tool_functions(task.metadata.get("functions"))
+        or _coerce_tool_functions(task.metadata.get("function"))
+        or _coerce_tool_functions(task.metadata.get("tools"))
+    )
+
+
+def _tool_schema_user_content(task: ShardedTask) -> str:
+    functions = tool_functions_for_task(task)
+    if not functions:
+        return f"Q: {task.prompt}\nA:"
+    schema = json.dumps(functions, indent=2, ensure_ascii=True, sort_keys=True)
+    return (
+        "Available functions:\n"
+        f"{schema}\n\n"
+        "For function-call tasks, give the final answer as one JSON object per "
+        "line. Each object must map the function name to an argument object, for "
+        "example {\"function.name\": {\"argument\": [value]}}.\n\n"
+        f"Q: {task.prompt}\nA:"
+    )
+
+
 def initial_messages(task: ShardedTask, prompt_style: str | None = None) -> list[dict[str, str]]:
-    normalize_prompt_style(prompt_style)
+    style = normalize_prompt_style(prompt_style)
+    user_content = _tool_schema_user_content(task) if style == TOOL_SCHEMA_PROMPT_STYLE else f"Q: {task.prompt}\nA:"
     return [
         {"role": "system", "content": system_prompt_for_task(task)},
-        {"role": "user", "content": f"Q: {task.prompt}\nA:"},
+        {"role": "user", "content": user_content},
     ]
 
 
@@ -376,6 +418,140 @@ def _mcq_letter(value: str) -> str | None:
     return match.group(1).upper()
 
 
+def _strip_json_fences(value: str) -> str:
+    lines = []
+    for line in value.strip().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            continue
+        if stripped.startswith(("-", "*")):
+            stripped = stripped[1:].strip()
+        lines.append(stripped)
+    return "\n".join(line for line in lines if line)
+
+
+def _json_objects_from_text(value: str) -> list[dict[str, Any]]:
+    text = _strip_json_fences(value)
+    if not text:
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        return [payload]
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+
+    objects: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        stripped = line.strip().rstrip(",")
+        if not (stripped.startswith("{") and stripped.endswith("}")):
+            continue
+        try:
+            item = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            objects.append(item)
+    return objects
+
+
+def _flatten_tool_call_objects(objects: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    calls: list[tuple[str, dict[str, Any]]] = []
+    for item in objects:
+        for name, args in item.items():
+            if isinstance(args, dict):
+                calls.append((str(name), args))
+            else:
+                calls.append((str(name), {}))
+    return calls
+
+
+def _normalized_json_value(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+
+
+def _tool_value_matches(predicted: Any, accepted: Any) -> bool:
+    if isinstance(accepted, list):
+        if _normalized_json_value(predicted) == _normalized_json_value(accepted):
+            return True
+        if isinstance(predicted, list) and len(predicted) == 1:
+            if any(_tool_value_matches(predicted[0], option) for option in accepted):
+                return True
+        return any(_tool_value_matches(predicted, option) for option in accepted)
+    if isinstance(predicted, list) and len(predicted) == 1:
+        return _tool_value_matches(predicted[0], accepted)
+    if isinstance(predicted, (int, float)) and isinstance(accepted, (int, float)):
+        return math.isclose(float(predicted), float(accepted), rel_tol=1e-6, abs_tol=1e-6)
+    if isinstance(predicted, str) or isinstance(accepted, str):
+        return normalize_answer(str(predicted)) == normalize_answer(str(accepted))
+    return _normalized_json_value(predicted) == _normalized_json_value(accepted)
+
+
+def _tool_args_match(predicted_args: dict[str, Any], reference_args: dict[str, Any]) -> bool:
+    if set(predicted_args) != set(reference_args):
+        return False
+    return all(_tool_value_matches(predicted_args[key], reference_args[key]) for key in reference_args)
+
+
+def score_tool_call_answer(prediction: str | None, reference: str) -> dict[str, Any]:
+    if prediction is None:
+        return {
+            "score": 0.0,
+            "acc": 0.0,
+            "pred": None,
+            "incorrect_format": 1,
+            "feedback": "The final answer must contain JSON function-call objects.",
+        }
+    predicted_calls = _flatten_tool_call_objects(_json_objects_from_text(prediction))
+    reference_calls = _flatten_tool_call_objects(_json_objects_from_text(reference))
+    if not predicted_calls or not reference_calls:
+        return {
+            "score": 0.0,
+            "acc": 0.0,
+            "pred": prediction,
+            "incorrect_format": 1,
+            "feedback": "Could not parse JSON function-call objects from the final answer.",
+        }
+    if len(predicted_calls) != len(reference_calls):
+        return {
+            "score": 0.0,
+            "acc": 0.0,
+            "pred": prediction,
+            "incorrect_format": 0,
+            "feedback": "The number of function calls is incorrect.",
+        }
+
+    unmatched = list(predicted_calls)
+    for ref_name, ref_args in reference_calls:
+        match_index = next(
+            (
+                idx
+                for idx, (pred_name, pred_args) in enumerate(unmatched)
+                if pred_name == ref_name and _tool_args_match(pred_args, ref_args)
+            ),
+            None,
+        )
+        if match_index is None:
+            return {
+                "score": 0.0,
+                "acc": 0.0,
+                "pred": prediction,
+                "incorrect_format": 0,
+                "feedback": "The function call name or arguments are incorrect.",
+            }
+        unmatched.pop(match_index)
+
+    return {
+        "score": 1.0,
+        "acc": 1.0,
+        "pred": prediction,
+        "incorrect_format": 0,
+        "feedback": "",
+    }
+
+
 def score_final_answer(prediction: str | None, reference: str, kind: str = "exact") -> dict[str, Any]:
     if prediction is None:
         return {
@@ -392,6 +568,8 @@ def score_final_answer(prediction: str | None, reference: str, kind: str = "exac
     kind = kind.lower()
     reference = str(reference)
     correct = False
+    if kind in {"tool_call", "function_call", "actions"}:
+        return score_tool_call_answer(prediction, reference)
     if kind in {"number", "numeric", "gsm8k"}:
         pred_num = _last_number(prediction)
         ref_num = _last_number(reference)

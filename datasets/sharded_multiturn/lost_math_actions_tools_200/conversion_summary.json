@@ -1,0 +1,14 @@
+[
+  {
+    "source": "/Users/macbookair/.cache/huggingface/hub/datasets--microsoft--lost_in_conversation/snapshots/b6b71f418423c61cef0f439c610a4a655cc0e2d5/lost_in_conversation.json",
+    "input_rows": 627,
+    "converted": 208,
+    "skipped": 0,
+    "train": 187,
+    "test": 21,
+    "tasks": [
+      "actions",
+      "math"
+    ]
+  }
+]

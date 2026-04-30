@@ -169,7 +169,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sharded-prompt-style",
         default=os.environ.get("SHARDED_PROMPT_STYLE", "default"),
-        help="Prompt style for sharded_multiturn rows: default, minimal, or linc_math.",
+        help="Prompt style for sharded_multiturn rows: default, minimal, linc_math, or tool_schema.",
     )
     parser.add_argument(
         "--sharded-allow-untagged-final",

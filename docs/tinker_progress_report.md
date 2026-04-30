@@ -1064,6 +1064,33 @@ Remaining gaps:
    without SDPO (`5/21`), and the remaining bottleneck is the actions subset,
    where all methods are still `0/13`.
 
+   Action-schema correction:
+
+   The first mixed split was useful for finding a real data-interface problem:
+   action rows expected BFCL-style JSON function calls, but the converted
+   `sharded_multiturn` rows did not preserve the upstream `function` schemas.
+   For example, `sharded-BFCL/parallel_144` initially asks "What is the
+   factorial of 5?" while the reference answer is a `math.factorial` JSON call.
+   Without the available function schema, natural-language answers are
+   reasonable but still scored wrong.
+
+   The converter now preserves upstream action metadata as `functions`,
+   `language`, and `test_category`; action rows convert to `kind=tool_call`; and
+   `SHARDED_PROMPT_STYLE=tool_schema` restores the function schema and expected
+   JSON-call output format without revealing hidden shards. A corrected split
+   was generated at `datasets/sharded_multiturn/lost_math_actions_tools_200`.
+   It preserves the same train/test IDs and task mix as
+   `lost_math_actions_200`:
+
+   - train rows: `187` (`95` math, `92` actions)
+   - test rows: `21` (`8` math, `13` actions)
+   - action rows with function schemas: `92/92` train, `13/13` test
+
+   The previous clean-prompt mixed results should be reported as an important
+   diagnostic, not as the final action-task comparison. The next fair mixed
+   comparison should rerun base, sparse, dense, and SDPO on
+   `lost_math_actions_tools_200` with `SHARDED_PROMPT_STYLE=tool_schema`.
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
