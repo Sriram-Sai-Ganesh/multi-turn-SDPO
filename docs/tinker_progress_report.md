@@ -982,23 +982,59 @@ Remaining gaps:
    - `SDPO_TEACHER_PROMPT_STYLE=brief`: legacy shorter privileged teacher
      prompt with a "This may be under-specified..." prefix.
 
-   Next prompt-ablation command:
+   Completed minimal-prompt base eval:
 
-   ```bash
-   PYTHON_BIN=.venv/bin/python \
-   DATA_PATH=datasets/sharded_multiturn/lost_math_actions_200 \
-   SPLIT=test \
-   MODEL_NAME=Qwen/Qwen3-8B \
-   RENDERER_NAME=qwen3_disable_thinking \
-   SHARDED_PROMPT_STYLE=minimal \
-   SHARDED_ALLOW_UNTAGGED_FINAL=1 \
-   MAX_TURNS=0 \
-   MAX_TOKENS=256 \
-   TEMPERATURE=0.0 \
-   BATCH_SIZE=1 \
-   NUM_SAMPLES=1 \
-   ./run_tinker_eval.sh lost-math-actions-base-minimal-untagged-test
-   ```
+   - run: `lost-math-actions-base-minimal-untagged-test`
+   - reward: `4/21 = 19.05%`
+   - format errors: `0/21 = 0.0%`
+   - comparison to default-prompt base: same task success, fewer format errors
+
+   Interpretation: prompt verbosity and XML formatting were real measurement
+   confounds for format errors, but not for task success. With only the
+   underspecified user task as input, base Qwen still solves only `4/21`, so the
+   mixed split remains a valid test of intrinsic under-specification handling.
+
+   Completed minimal-prompt sparse-GRPO 60-step baseline:
+
+   - training run: `lost-math-actions-sparse-grpo-minimal-shuffle7-60`
+   - eval run: `lost-math-actions-sparse-grpo-minimal-shuffle7-60-eval`
+   - reward: `4/21 = 19.05%`
+   - format errors: `0/21 = 0.0%`
+   - trainable RL steps: `13/60`
+   - skipped optimizer steps: `47/60`
+   - trainable samples used: `304`
+   - held-out actions subset: `0/13`
+   - successful examples: `sharded-GSM8K/435`, `sharded-GSM8K/1187`,
+     `sharded-GSM8K/140`, `sharded-GSM8K/1113`
+
+   Interpretation: sparse terminal GRPO does not improve over the clean base
+   model on the mixed split. The run is also severely starved for useful
+   gradients because most rollout groups have identical terminal rewards. This
+   strengthens the case for dense RLRF-style feedback and SDPO-style feedback
+   distillation under the same minimal student prompt.
+
+   Completed minimal-prompt dense/RLRF 60-step pilot:
+
+   - training run: `lost-math-actions-dense-rlrf-minimal-shuffle7-60`
+   - eval run: `lost-math-actions-dense-rlrf-minimal-shuffle7-60-eval`
+   - reward: `5/21 = 23.81%`
+   - format errors: `1/21 = 4.76%`
+   - trainable RL steps: `48/60`
+   - skipped optimizer steps: `12/60`
+   - trainable samples used: `596`
+   - held-out math subset: `5/8 = 62.5%`
+   - held-out actions subset: `0/13 = 0.0%`
+   - successful examples: `sharded-GSM8K/435`, `sharded-GSM8K/1187`,
+     `sharded-GSM8K/799`, `sharded-GSM8K/140`, `sharded-GSM8K/1113`
+
+   Interpretation: dense/RLRF is the first clean-prompt method to beat both
+   base Qwen and sparse GRPO on the mixed held-out split (`+1/21`). It also
+   produces much more training signal than sparse terminal reward
+   (`48/60` trainable steps versus `13/60`). The gain is still limited to math
+   examples; every held-out actions example remains unsolved. This means the
+   result supports the dense-feedback direction, but the next decisive test is
+   SDPO-style feedback distillation or a stronger action-specific feedback
+   signal under the same minimal student prompt.
 
 7. Run a minimal local/JHU smoke test.
 
