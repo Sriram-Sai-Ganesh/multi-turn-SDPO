@@ -1186,6 +1186,37 @@ Remaining gaps:
      idea. Each held-out example changes the aggregate by `4.76` percentage
      points, so larger evals or repeated seeds are needed for stronger claims.
 
+   Max-token sensitivity re-eval:
+
+   The 256-token eval budget was likely truncating some verbose Qwen math
+   answers before the final answer. Re-evaluating the corrected base, sparse
+   GRPO, and dense/RLRF checkpoints with `MAX_TOKENS=512` changes the main
+   corrected-pilot conclusion:
+
+   - base run: `lost-math-actions-tools-base-fixed-scorer-test-512`
+     - reward: `5/21 = 23.81%`
+     - format errors: `6/21 = 28.57%`
+     - math subset: `3/8 = 37.5%`
+     - actions subset: `2/13 = 15.38%`
+   - sparse run: `lost-math-actions-tools-sparse-grpo-shuffle7-60-eval-512`
+     - reward: `5/21 = 23.81%`
+     - format errors: `7/21 = 33.33%`
+     - math subset: `3/8 = 37.5%`
+     - actions subset: `2/13 = 15.38%`
+   - dense/RLRF run: `lost-math-actions-tools-dense-rlrf-shuffle7-60-eval-512`
+     - reward: `6/21 = 28.57%`
+     - format errors: `4/21 = 19.05%`
+     - math subset: `4/8 = 50.0%`
+     - actions subset: `2/13 = 15.38%`
+
+   Interpretation: with the less truncating eval budget, dense/RLRF is the
+   strongest corrected run so far. The gain comes from the math-sharded subset,
+   which is closest to the proposal's underspecified multi-turn clarification
+   setting. Sparse GRPO ties base accuracy but has worse format errors. The
+   action/tool subset remains tied across methods, suggesting the current
+   clarify-until-all-shards dense rubric is not yet well matched to incremental
+   tool-call tasks.
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
