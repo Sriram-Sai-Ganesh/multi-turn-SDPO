@@ -1,5 +1,6 @@
 import json
 
+from scripts.build_clean_holdout import build_holdout
 from scripts.convert_lost_in_conversation import convert_record, split_records
 
 
@@ -90,3 +91,48 @@ def test_split_records_is_deterministic():
     assert json.dumps(right_a, sort_keys=True) == json.dumps(right_b, sort_keys=True)
     assert len(left_a) == 8
     assert len(right_a) == 2
+
+
+def test_build_clean_holdout_excludes_ids_and_shuffles():
+    rows = [
+        {
+            "task_id": "keep-math",
+            "task": "math",
+            "shards": [
+                {"shard_id": 1, "shard": "John has 2 apples."},
+                {"shard_id": 2, "shard": "He buys 3 more. How many apples does he have?"},
+            ],
+            "answer": "5",
+        },
+        {
+            "task_id": "exclude-math",
+            "task": "math",
+            "shards": [
+                {"shard_id": 1, "shard": "A"},
+                {"shard_id": 2, "shard": "B"},
+            ],
+            "answer": "C",
+        },
+        {
+            "task_id": "skip-translation",
+            "task": "translation",
+            "shards": [
+                {"shard_id": 1, "shard": "Translate hi."},
+                {"shard_id": 2, "shard": "Into French."},
+            ],
+            "answer": "salut",
+        },
+    ]
+
+    records, summary = build_holdout(
+        rows=rows,
+        task_filter={"math", "actions"},
+        excluded_ids={"exclude-math"},
+        seed=3,
+        max_records=0,
+    )
+
+    assert [record["idx"] for record in records] == ["keep-math"]
+    assert summary["converted_holdout"] == 1
+    assert summary["excluded_ids_matched"] == 1
+    assert summary["task_counts"] == {"math": 1}
