@@ -64,6 +64,13 @@ def test_score_tool_call_answer_matches_multiple_json_lines_order_insensitively(
     assert score_final_answer(prediction, reference, "tool_call")["score"] == 1.0
 
 
+def test_score_tool_call_answer_accepts_common_wrapper_shape():
+    reference = '{"math.factorial": {"number": [5]}}'
+    prediction = '{"function.name": "math.factorial", "arguments": {"number": 5}}'
+
+    assert score_tool_call_answer(prediction, reference)["score"] == 1.0
+
+
 def test_sharded_task_row_to_messages_uses_default_system():
     row = {
         "idx": "x",
@@ -142,7 +149,8 @@ def test_tool_schema_prompt_style_includes_available_functions_without_hidden_sh
     assert TOOL_SCHEMA_PROMPT_STYLE == "tool_schema"
     assert "Available functions:" in user_content
     assert "math.factorial" in user_content
-    assert '{"function.name": {"argument": [value]}}' in user_content
+    assert '{"math.factorial": {"argument_name": [value]}}' in user_content
+    assert 'Do not use wrapper keys such as "function.name"' in user_content
     assert "What is the factorial of 5?" in user_content
     assert "Now calculate the factorial of 3" not in user_content
 

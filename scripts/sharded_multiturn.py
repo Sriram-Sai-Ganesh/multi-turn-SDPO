@@ -301,12 +301,20 @@ def _tool_schema_user_content(task: ShardedTask) -> str:
     if not functions:
         return f"Q: {task.prompt}\nA:"
     schema = json.dumps(functions, indent=2, ensure_ascii=True, sort_keys=True)
+    first_function_name = ""
+    for function in functions:
+        if isinstance(function, dict) and function.get("name"):
+            first_function_name = str(function["name"])
+            break
+    example_name = first_function_name or "function.name"
     return (
         "Available functions:\n"
         f"{schema}\n\n"
         "For function-call tasks, give the final answer as one JSON object per "
         "line. Each object must map the function name to an argument object, for "
-        "example {\"function.name\": {\"argument\": [value]}}.\n\n"
+        f"example {{\"{example_name}\": {{\"argument_name\": [value]}}}}. "
+        "Do not use wrapper keys such as \"function.name\" or \"arguments\" unless "
+        "they are actual function or argument names.\n\n"
         f"Q: {task.prompt}\nA:"
     )
 
@@ -460,6 +468,28 @@ def _json_objects_from_text(value: str) -> list[dict[str, Any]]:
 def _flatten_tool_call_objects(objects: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
     calls: list[tuple[str, dict[str, Any]]] = []
     for item in objects:
+        name = (
+            item.get("function.name")
+            or item.get("function_name")
+            or item.get("function")
+            or item.get("name")
+            or item.get("tool_name")
+            or item.get("Action")
+            or item.get("action")
+        )
+        args = (
+            item.get("arguments")
+            or item.get("argument")
+            or item.get("args")
+            or item.get("parameters")
+            or item.get("input")
+            or item.get("Action Input")
+            or item.get("Action_Input")
+            or item.get("action_input")
+        )
+        if name is not None:
+            calls.append((str(name), args if isinstance(args, dict) else {}))
+            continue
         for name, args in item.items():
             if isinstance(args, dict):
                 calls.append((str(name), args))

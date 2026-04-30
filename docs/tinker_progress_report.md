@@ -1091,6 +1091,24 @@ Remaining gaps:
    comparison should rerun base, sparse, dense, and SDPO on
    `lost_math_actions_tools_200` with `SHARDED_PROMPT_STYLE=tool_schema`.
 
+   Initial corrected-split base eval:
+
+   - run: `lost-math-actions-tools-base-test`
+   - observed reward before tool-call wrapper parsing fix: `3/21 = 14.29%`
+   - observed format errors: `6/21 = 28.57%`
+   - successful examples: `sharded-GSM8K/799`, `sharded-GSM8K/140`,
+     `sharded-GSM8K/1113`
+
+   Follow-up inspection showed Qwen often emitted a common JSON tool-call shape
+   such as `{"function.name": "math.factorial", "arguments": {"number": 5}}`
+   instead of the canonical `{ "math.factorial": {"number": [5]} }` shape.
+   The scorer now accepts both shapes, and the prompt example was changed to
+   use a concrete function name instead of the ambiguous literal placeholder
+   `"function.name"`. Rescoring the same saved base samples locally after that
+   fix gives `5/21`, including `2/13` action rows. The next logged Tinker eval
+   should rerun the base command under a new run name so the official metrics
+   reflect the updated scorer and prompt.
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
