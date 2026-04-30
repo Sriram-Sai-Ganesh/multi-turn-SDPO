@@ -1109,6 +1109,22 @@ Remaining gaps:
    should rerun the base command under a new run name so the official metrics
    reflect the updated scorer and prompt.
 
+   Corrected-scorer base eval:
+
+   - run: `lost-math-actions-tools-base-fixed-scorer-test`
+   - reward: `5/21 = 23.81%`
+   - format errors: `5/21 = 23.81%`
+   - math subset: `3/8 = 37.5%`
+   - actions subset: `2/13 = 15.38%`
+   - successful action examples: `sharded-BFCL/parallel_144`,
+     `sharded-BFCL/parallel_195`
+   - successful math examples: `sharded-GSM8K/799`, `sharded-GSM8K/140`,
+     `sharded-GSM8K/1113`
+
+   This is the new fair baseline for the corrected mixed math+actions split.
+   The next sparse, dense/RLRF, SDPO, and SFT comparisons should use this
+   dataset, prompt style, scoring code, and run as the base reference.
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
