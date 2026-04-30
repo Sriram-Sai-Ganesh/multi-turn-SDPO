@@ -1168,6 +1168,24 @@ Remaining gaps:
    This shifts the next project step toward a supervised sharded baseline and/or
    SDPO-style feedback distillation under the corrected tool-schema interface.
 
+   Corrected-split reporting split:
+
+   - Math-sharded subset (`8` held-out examples): base Qwen is currently
+     strongest at `3/8`; sparse GRPO and dense/RLRF are both `2/8`. This is the
+     subset closest to the original multi-turn clarification proposal because
+     hidden shards are missing facts needed to solve a final answer.
+   - Action/tool-sharded subset (`13` held-out examples): all corrected runs so
+     far are tied at `2/13`. This subset is a useful extension, but it is not
+     identical to the math clarification setup because many action shards are
+     incremental tool-call requests. The current dense rubric rewards asking for
+     information and penalizes intermediate final/tool-call outputs, which may
+     conflict with the natural action-task behavior.
+   - Mixed aggregate (`21` held-out examples): corrected base is `5/21`, sparse
+     GRPO is `4/21`, and dense/RLRF is `4/21`. The aggregate should be reported
+     as a small corrected pilot, not as conclusive evidence against the project
+     idea. Each held-out example changes the aggregate by `4.76` percentage
+     points, so larger evals or repeated seeds are needed for stronger claims.
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
