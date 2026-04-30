@@ -1217,6 +1217,25 @@ Remaining gaps:
    clarify-until-all-shards dense rubric is not yet well matched to incremental
    tool-call tasks.
 
+   Completed corrected-split SFT baseline:
+
+   - training run: `lost-math-actions-tools-sft-shuffle7-60`
+   - eval run: `lost-math-actions-tools-sft-shuffle7-60-eval-512`
+   - reward: `2/21 = 9.52%`
+   - format errors: `11/21 = 52.38%`
+   - supervised training steps: `60/60`
+   - math subset: `2/8 = 25.0%`
+   - actions subset: `0/13 = 0.0%`
+   - successful examples: `sharded-GSM8K/799`, `sharded-GSM8K/140`
+
+   Interpretation: the simple SFT baseline does not validate the current
+   demonstration recipe. It trains on generic clarification targets such as
+   "Could you provide the next missing detail?" and final-answer targets after
+   all shards are revealed, but this harms held-out behavior relative to base
+   and dense/RLRF, especially on action/tool rows. The result suggests that
+   supervised feedback/distillation needs task-aware targets or a better
+   teacher, rather than generic clarification text.
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
