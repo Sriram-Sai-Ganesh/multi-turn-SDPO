@@ -28,7 +28,12 @@ if [ -z "${TINKER_API_KEY:-}" ]; then
     exit 1
 fi
 
-RUN_PREFIX="${RUN_PREFIX:-lost-math-actions-tools-clean-holdout}"
+HOLDOUT_TASKS="${HOLDOUT_TASKS:-math actions}"
+DEFAULT_RUN_PREFIX="lost-math-actions-tools-clean-holdout"
+if [ "$HOLDOUT_TASKS" = "math" ]; then
+    DEFAULT_RUN_PREFIX="lost-math-tools-clean-holdout"
+fi
+RUN_PREFIX="${RUN_PREFIX:-$DEFAULT_RUN_PREFIX}"
 HOLDOUT_SEED="${HOLDOUT_SEED:-101}"
 MAX_HOLDOUT_RECORDS="${MAX_HOLDOUT_RECORDS:-0}"
 HOLDOUT_DIR="${HOLDOUT_DIR:-$PROJECT_ROOT/_logs/holdouts/$RUN_PREFIX}"
@@ -97,6 +102,11 @@ run_with_retries() {
 
 build_holdout() {
     local exclude_args=()
+    local task_args=()
+    local task
+    for task in $HOLDOUT_TASKS; do
+        task_args+=(--task "$task")
+    done
     if [ "$EXCLUDE_ACTUAL_DENSE_TRAIN" = "1" ] || [ "$EXCLUDE_ACTUAL_DENSE_TRAIN" = "true" ]; then
         local trained_ids_json="$HOLDOUT_DIR/exclude_dense_train_ids.json"
         "$PYTHON_BIN" - <<'PY' "$REFERENCE_SPLIT_DIR/train.json" "$trained_ids_json" "$DENSE_TRAIN_SHUFFLE_SEED" "$DENSE_TRAIN_MAX_STEPS" "$DENSE_TRAIN_BATCH_SIZE"
@@ -133,8 +143,7 @@ PY
         --output-dir "$HOLDOUT_DIR"
         --seed "$HOLDOUT_SEED"
         --max-records "$MAX_HOLDOUT_RECORDS"
-        --task math
-        --task actions
+        "${task_args[@]}"
         "${exclude_args[@]}"
     )
     "${args[@]}"
@@ -181,6 +190,7 @@ log "Large clean holdout eval started"
 log "Holdout dir: $HOLDOUT_DIR"
 log "Run prefix: $RUN_PREFIX"
 log "Source: $SOURCE ($SOURCE_SPLIT)"
+log "Holdout tasks: $HOLDOUT_TASKS"
 log "Model name: $HOLDOUT_MODEL_NAME"
 log "Reveal policy: $SHARDED_REVEAL_POLICY"
 log "Exclude current test: $EXCLUDE_CURRENT_TEST"
