@@ -1236,6 +1236,43 @@ Remaining gaps:
    supervised feedback/distillation needs task-aware targets or a better
    teacher, rather than generic clarification text.
 
+   Completed larger clean-holdout eval:
+
+   A larger clean holdout was generated under
+   `_logs/holdouts/lost-math-actions-tools-clean-holdout` from the corrected
+   math/actions split. It excludes the `60` rows actually used by the dense
+   training run (`SHUFFLE_SEED=7`, `MAX_STEPS=60`, `BATCH_SIZE=1`) and excludes
+   the current `21`-row corrected test split. This leaves `127` clean holdout
+   examples:
+
+   - holdout size: `127`
+   - task mix: `63` math, `64` actions
+   - excluded IDs matched: `81`
+
+   Larger holdout results with `MAX_TOKENS=512`:
+
+   - base run: `lost-math-actions-tools-clean-holdout-base-512`
+     - reward: `44/127 = 34.65%`
+     - format errors: `25/127 = 19.69%`
+     - math subset: `27/63 = 42.86%`
+     - actions subset: `17/64 = 26.56%`
+   - dense/RLRF run:
+     `lost-math-actions-tools-clean-holdout-dense-rlrf-shuffle7-60-512`
+     - reward: `44/127 = 34.65%`
+     - format errors: `23/127 = 18.11%`
+     - math subset: `24/63 = 38.10%`
+     - actions subset: `20/64 = 31.25%`
+   - overlap: `37` examples solved by both, `7` base-only, `7` dense-only
+
+   Interpretation: the larger clean holdout does not reproduce the small
+   `21`-example aggregate dense win. Dense/RLRF ties base overall, reduces
+   format errors slightly, improves the action/tool subset by `+3/64`, but
+   regresses the math subset by `-3/63`. This means the current evidence is a
+   mixed but useful result: dense feedback changes the behavior and improves
+   some tool/action cases, but the aggregate benefit is not yet robust. The
+   project report should frame the corrected `21`-example result as a pilot and
+   the `127`-example result as the stronger robustness check.
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or
