@@ -71,6 +71,11 @@ def parse_args() -> argparse.Namespace:
         help="Prompt style for sharded_multiturn rows: default, minimal, linc_math, or tool_schema.",
     )
     parser.add_argument(
+        "--sharded-reveal-policy",
+        default=os.environ.get("SHARDED_REVEAL_POLICY", "always"),
+        help="Hidden-shard reveal policy for sharded_multiturn rows: always or clarify_only.",
+    )
+    parser.add_argument(
         "--sharded-allow-untagged-final",
         action="store_true",
         default=os.environ.get("SHARDED_ALLOW_UNTAGGED_FINAL", "0").strip().lower()
@@ -99,11 +104,12 @@ def main() -> None:
         first_messages = row_to_messages(rows[0], prompt_style=args.sharded_prompt_style)
         LOGGER.info("Dry run prompt roles: %s", [msg["role"] for msg in first_messages])
         LOGGER.info(
-            "Dry run dataset=%s model=%s model_path=%s sharded_prompt_style=%s allow_untagged_final=%s",
+            "Dry run dataset=%s model=%s model_path=%s sharded_prompt_style=%s sharded_reveal_policy=%s allow_untagged_final=%s",
             rows[0].get("dataset"),
             args.model_name,
             args.model_path,
             args.sharded_prompt_style,
+            args.sharded_reveal_policy,
             args.sharded_allow_untagged_final,
         )
         return
@@ -155,12 +161,13 @@ def main() -> None:
         model_label = args.model_name
 
     LOGGER.info(
-        "Evaluating model=%s renderer=%s examples=%d num_samples=%d sharded_prompt_style=%s allow_untagged_final=%s",
+        "Evaluating model=%s renderer=%s examples=%d num_samples=%d sharded_prompt_style=%s sharded_reveal_policy=%s allow_untagged_final=%s",
         model_label,
         renderer_name,
         len(rows),
         args.num_samples,
         args.sharded_prompt_style,
+        args.sharded_reveal_policy,
         args.sharded_allow_untagged_final,
     )
     start_time = time.time()
@@ -200,6 +207,7 @@ def main() -> None:
                         sample_fn,
                         max_turns=args.max_turns if args.max_turns > 0 else None,
                         prompt_style=args.sharded_prompt_style,
+                        reveal_policy=args.sharded_reveal_policy,
                     )
                     reward = rollout.reward
                     rewards.append(reward)
@@ -268,6 +276,9 @@ def main() -> None:
         "data_path": str(split_file),
         "examples": len(rows),
         "num_samples": args.num_samples,
+        "sharded_prompt_style": args.sharded_prompt_style,
+        "sharded_reveal_policy": args.sharded_reveal_policy,
+        "sharded_allow_untagged_final": args.sharded_allow_untagged_final,
         "samples": len(rewards),
         "reward_mean": mean(rewards),
         "examples_with_success": examples_with_success,

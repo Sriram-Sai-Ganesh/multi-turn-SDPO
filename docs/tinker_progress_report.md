@@ -1273,6 +1273,26 @@ Remaining gaps:
    project report should frame the corrected `21`-example result as a pilot and
    the `127`-example result as the stronger robustness check.
 
+   Proposal-alignment audit:
+
+   - The clean holdout comparison is mechanically fair: it uses the same
+     corrected split, same renderer, same token budget, no overlap with the
+     `60` dense-training rows, and no overlap with the `21`-row pilot test.
+   - The interpretation is only partially aligned with the original proposal,
+     because the default sharded environment revealed the next hidden shard
+     after any non-final assistant turn. That measures hidden-shard adaptation,
+     but it does not strictly test whether the model asks an information-seeking
+     clarification before receiving the missing detail.
+   - The next proposal-aligned condition is therefore the opt-in reveal policy
+     `SHARDED_REVEAL_POLICY=clarify_only`. In this mode, hidden shards are
+     revealed only after the assistant asks a clarifying/information-seeking
+     question; a premature final answer or non-clarifying response ends the
+     rollout without revealing more hidden context.
+   - The rollout scorer now also treats a correct-but-premature final answer as
+     premature instead of granting terminal credit. This better matches the
+     research claim: success should require the model to recover missing
+     information, not to guess the hidden answer.
+
 7. Run a minimal local/JHU smoke test.
 
    The Tinker work is separate from the local/JHU `verl` path. Before merging or

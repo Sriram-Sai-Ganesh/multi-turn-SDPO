@@ -270,6 +270,11 @@ def parse_args() -> argparse.Namespace:
         help="Prompt style for sharded_multiturn rows: default, minimal, linc_math, or tool_schema.",
     )
     parser.add_argument(
+        "--sharded-reveal-policy",
+        default=os.environ.get("SHARDED_REVEAL_POLICY", "always"),
+        help="Hidden-shard reveal policy for sharded_multiturn rows: always or clarify_only.",
+    )
+    parser.add_argument(
         "--sharded-allow-untagged-final",
         action="store_true",
         default=os.environ.get("SHARDED_ALLOW_UNTAGGED_FINAL", "0").strip().lower()
@@ -341,10 +346,11 @@ def main() -> None:
         first_messages = row_to_messages(rows[0], prompt_style=args.sharded_prompt_style)
         LOGGER.info("Dry run prompt roles: %s", [msg["role"] for msg in first_messages])
         LOGGER.info(
-            "Dry run dataset=%s model=%s sharded_reward_mode=%s",
+            "Dry run dataset=%s model=%s sharded_reward_mode=%s sharded_reveal_policy=%s",
             rows[0].get("dataset"),
             args.model_name,
             args.sharded_reward_mode,
+            args.sharded_reveal_policy,
         )
         return
 
@@ -398,11 +404,12 @@ def main() -> None:
         )
 
         LOGGER.info(
-            "Using Tinker model=%s renderer=%s sharded_reward_mode=%s sharded_prompt_style=%s allow_untagged_final=%s",
+            "Using Tinker model=%s renderer=%s sharded_reward_mode=%s sharded_prompt_style=%s sharded_reveal_policy=%s allow_untagged_final=%s",
             args.model_name,
             renderer_name,
             args.sharded_reward_mode,
             args.sharded_prompt_style,
+            args.sharded_reveal_policy,
             args.sharded_allow_untagged_final,
         )
         service_client = tinker.ServiceClient(base_url=args.base_url)
@@ -575,6 +582,7 @@ def main() -> None:
                             sample_fn,
                             max_turns=args.max_turns if args.max_turns > 0 else None,
                             prompt_style=args.sharded_prompt_style,
+                            reveal_policy=args.sharded_reveal_policy,
                         )
                         rollouts.append(rollout)
                         turn_rewards = rollout_training_rewards(rollout, args.sharded_reward_mode)
@@ -590,6 +598,7 @@ def main() -> None:
                                 "training_reward": rollout_rewards[-1],
                                 "training_turn_rewards": turn_rewards,
                                 "sharded_reward_mode": args.sharded_reward_mode,
+                                "sharded_reveal_policy": args.sharded_reveal_policy,
                             }
                         )
                         write_jsonl(samples_path, record)
@@ -684,6 +693,7 @@ def main() -> None:
                                         "sdpo_topk": args.sdpo_topk,
                                         "has_successful_peer": successful_attempt is not None,
                                         "sharded_reward_mode": args.sharded_reward_mode,
+                                        "sharded_reveal_policy": args.sharded_reveal_policy,
                                     },
                                 )
             else:
@@ -775,6 +785,8 @@ def main() -> None:
                 "samples_used": sample_count,
                 "sdpo_samples_used": sdpo_sample_count,
                 "reward_mean": mean(group_rewards),
+                "sharded_reward_mode": args.sharded_reward_mode,
+                "sharded_reveal_policy": args.sharded_reveal_policy,
                 "loss": train_loss,
                 "time_sec": time.time() - start_time,
                 **loss_metrics,

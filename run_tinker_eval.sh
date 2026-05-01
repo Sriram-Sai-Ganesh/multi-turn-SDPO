@@ -9,7 +9,7 @@ set -euo pipefail
 # Common overrides:
 #   MODEL_NAME, MODEL_PATH, DATA_PATH, SPLIT, BATCH_SIZE, NUM_SAMPLES, MAX_TURNS,
 #   MAX_EXAMPLES, MAX_TOKENS, TEMPERATURE, RENDERER_NAME, TINKER_BASE_URL,
-#   SHARDED_PROMPT_STYLE, SHARDED_ALLOW_UNTAGGED_FINAL
+#   SHARDED_PROMPT_STYLE, SHARDED_REVEAL_POLICY, SHARDED_ALLOW_UNTAGGED_FINAL
 
 export PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
@@ -41,6 +41,7 @@ NUM_SAMPLES="${NUM_SAMPLES:-1}"
 MAX_EXAMPLES="${MAX_EXAMPLES:-0}"
 MAX_TURNS="${MAX_TURNS:-0}"
 SHARDED_PROMPT_STYLE="${SHARDED_PROMPT_STYLE:-default}"
+SHARDED_REVEAL_POLICY="${SHARDED_REVEAL_POLICY:-always}"
 SHARDED_ALLOW_UNTAGGED_FINAL="${SHARDED_ALLOW_UNTAGGED_FINAL:-0}"
 MAX_TOKENS="${MAX_TOKENS:-256}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
@@ -61,7 +62,7 @@ if [ -n "$RENDERER_NAME" ]; then
 fi
 echo "Python: $PYTHON_BIN"
 echo "Batch size: $BATCH_SIZE, num_samples: $NUM_SAMPLES, max_examples: $MAX_EXAMPLES, max_turns: $MAX_TURNS"
-echo "Sharded prompt style: $SHARDED_PROMPT_STYLE, allow untagged final: $SHARDED_ALLOW_UNTAGGED_FINAL"
+echo "Sharded prompt style: $SHARDED_PROMPT_STYLE, reveal policy: $SHARDED_REVEAL_POLICY, allow untagged final: $SHARDED_ALLOW_UNTAGGED_FINAL"
 echo "----------------------------------------------------------------"
 
 CMD=(
@@ -75,6 +76,7 @@ CMD=(
     --max-examples "$MAX_EXAMPLES"
     --max-turns "$MAX_TURNS"
     --sharded-prompt-style "$SHARDED_PROMPT_STYLE"
+    --sharded-reveal-policy "$SHARDED_REVEAL_POLICY"
     --max-tokens "$MAX_TOKENS"
     --temperature "$TEMPERATURE"
     --log-dir "$TINKER_EVAL_LOG_DIR"

@@ -12,7 +12,7 @@ set -euo pipefail
 #   SHUFFLE_SEED, SHARDED_REWARD_MODE, SDPO_DISTILL_WEIGHT, SDPO_TOPK,
 #   SDPO_SKIP_FIRST_N_TOKENS, SDPO_MAX_TEACHER_TOKENS,
 #   SDPO_TEACHER_TEMPERATURE, SDPO_DISTILL_ON, SHARDED_PROMPT_STYLE,
-#   SHARDED_ALLOW_UNTAGGED_FINAL, SDPO_TEACHER_PROMPT_STYLE
+#   SHARDED_REVEAL_POLICY, SHARDED_ALLOW_UNTAGGED_FINAL, SDPO_TEACHER_PROMPT_STYLE
 
 export PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
@@ -46,6 +46,7 @@ TEMPERATURE="${TEMPERATURE:-1.0}"
 SHUFFLE_SEED="${SHUFFLE_SEED:--1}"
 SHARDED_REWARD_MODE="${SHARDED_REWARD_MODE:-sparse}"
 SHARDED_PROMPT_STYLE="${SHARDED_PROMPT_STYLE:-default}"
+SHARDED_REVEAL_POLICY="${SHARDED_REVEAL_POLICY:-always}"
 SHARDED_ALLOW_UNTAGGED_FINAL="${SHARDED_ALLOW_UNTAGGED_FINAL:-0}"
 SDPO_TEACHER_PROMPT_STYLE="${SDPO_TEACHER_PROMPT_STYLE:-minimal_teacher}"
 LR="${LR:-1e-5}"
@@ -64,7 +65,7 @@ fi
 echo "Python: $PYTHON_BIN"
 echo "Batch size: $BATCH_SIZE, rollout_n: $ROLLOUT_N, max_steps: $MAX_STEPS, max_turns: $MAX_TURNS"
 echo "Sharded reward mode: $SHARDED_REWARD_MODE"
-echo "Sharded prompt style: $SHARDED_PROMPT_STYLE, allow untagged final: $SHARDED_ALLOW_UNTAGGED_FINAL"
+echo "Sharded prompt style: $SHARDED_PROMPT_STYLE, reveal policy: $SHARDED_REVEAL_POLICY, allow untagged final: $SHARDED_ALLOW_UNTAGGED_FINAL"
 if [ "$SHARDED_REWARD_MODE" = "sdpo" ]; then
     echo "SDPO distill weight: ${SDPO_DISTILL_WEIGHT:-0.1}, topk: ${SDPO_TOPK:-20}"
     echo "SDPO skip first tokens: ${SDPO_SKIP_FIRST_N_TOKENS:-3}, teacher max tokens: ${SDPO_MAX_TEACHER_TOKENS:-256}"
@@ -89,6 +90,7 @@ CMD=(
     --shuffle-seed "$SHUFFLE_SEED"
     --sharded-reward-mode "$SHARDED_REWARD_MODE"
     --sharded-prompt-style "$SHARDED_PROMPT_STYLE"
+    --sharded-reveal-policy "$SHARDED_REVEAL_POLICY"
     --sdpo-teacher-prompt-style "$SDPO_TEACHER_PROMPT_STYLE"
     --learning-rate "$LR"
     --lora-rank "$LORA_RANK"

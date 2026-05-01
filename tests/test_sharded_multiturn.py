@@ -1,6 +1,7 @@
 from scripts.sharded_multiturn import (
     DENSE_CLARIFICATION_REWARD,
     BRIEF_UNDERSPECIFIED_PREFIX,
+    CLARIFY_ONLY_REVEAL_POLICY,
     ENHANCED_TEACHER_PROMPT_STYLE,
     MINIMAL_TEACHER_PROMPT_STYLE,
     SDPO_REWARD_MODE,
@@ -11,6 +12,7 @@ from scripts.sharded_multiturn import (
     contains_environment_impersonation,
     extract_final_answer,
     initial_messages,
+    normalize_reveal_policy,
     normalize_reward_mode,
     run_sharded_interaction,
     shard_message,
@@ -202,6 +204,58 @@ def test_run_sharded_interaction_can_score_untagged_final_in_prompt_ablation():
     assert rollout.turn_scores[-1]["dense_action"] == "final_answer"
 
 
+def test_clarify_only_reveal_policy_withholds_shard_after_non_clarifying_turn():
+    task = ShardedTask(
+        task_id="x",
+        prompt="Add hidden numbers.",
+        shards=["First is 1.", "Second is 2."],
+        answer="3",
+        kind="number",
+    )
+    responses = iter(["I can solve this directly."])
+
+    rollout = run_sharded_interaction(
+        task,
+        lambda _messages: SampledResponse(text=next(responses)),
+        reveal_policy="clarify-only",
+    )
+
+    assert rollout.reward == 0.0
+    assert rollout.reveal_policy == CLARIFY_ONLY_REVEAL_POLICY
+    assert rollout.revealed_shards == 0
+    assert len(rollout.turns) == 1
+    assert [score["dense_action"] for score in rollout.turn_scores] == ["non_clarifying"]
+    assert all("First is 1." not in message["content"] for message in rollout.transcript)
+
+
+def test_clarify_only_reveal_policy_reveals_only_after_clarification():
+    task = ShardedTask(
+        task_id="x",
+        prompt="Add hidden numbers.",
+        shards=["First is 1.", "Second is 2."],
+        answer="3",
+        kind="number",
+    )
+    responses = iter(
+        [
+            "What is the first number?",
+            "What is the second number?",
+            "<final>3</final>",
+        ]
+    )
+
+    rollout = run_sharded_interaction(
+        task,
+        lambda _messages: SampledResponse(text=next(responses)),
+        reveal_policy="clarify_only",
+    )
+
+    assert rollout.reward == 1.0
+    assert rollout.revealed_shards == 2
+    assert [score["dense_action"] for score in rollout.turn_scores] == ["clarify", "clarify", "final_answer"]
+    assert normalize_reveal_policy("gated") == CLARIFY_ONLY_REVEAL_POLICY
+
+
 def test_score_response_handles_sharded_multiturn_rows():
     row = {
         "idx": "x",
@@ -257,6 +311,23 @@ def test_run_sharded_interaction_penalizes_earlier_environment_impersonation():
     assert rollout.reward == 0.0
     assert rollout.score["incorrect_format"] == 1
     assert len(rollout.turns) == 1
+
+
+def test_run_sharded_interaction_penalizes_correct_but_premature_final_answer():
+    task = ShardedTask(
+        task_id="x",
+        prompt="Add hidden numbers.",
+        shards=["First is 1.", "Second is 2."],
+        answer="3",
+        kind="number",
+    )
+    responses = iter(["<final>3</final>"])
+
+    rollout = run_sharded_interaction(task, lambda _messages: SampledResponse(text=next(responses)))
+
+    assert rollout.reward == 0.0
+    assert rollout.score["dense_action"] == "premature_final"
+    assert rollout.score["premature_final"] == 1
 
 
 def test_local_reward_module_handles_sharded_multiturn_rows():

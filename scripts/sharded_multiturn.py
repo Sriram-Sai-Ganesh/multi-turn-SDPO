@@ -82,6 +82,8 @@ SPARSE_REWARD_MODE = "sparse"
 DENSE_REWARD_MODE = "dense"
 SDPO_REWARD_MODE = "sdpo"
 DENSE_CLARIFICATION_REWARD = 0.25
+ALWAYS_REVEAL_POLICY = "always"
+CLARIFY_ONLY_REVEAL_POLICY = "clarify_only"
 
 
 @dataclass(frozen=True)
@@ -150,6 +152,7 @@ class MultiturnRollout:
     revealed_shards: int
     transcript: list[dict[str, str]]
     turn_scores: list[dict[str, Any]] = field(default_factory=list)
+    reveal_policy: str = ALWAYS_REVEAL_POLICY
 
     @property
     def reward(self) -> float:
@@ -176,6 +179,7 @@ class MultiturnRollout:
             "revealed_shards": self.revealed_shards,
             "turns": len(self.turns),
             "turn_scores": self.turn_scores,
+            "reveal_policy": self.reveal_policy,
             "final_response": self.final_response,
             "transcript": self.transcript,
         }
@@ -234,6 +238,22 @@ def normalize_prompt_style(style: str | None) -> str:
     if normalized in {TOOL_SCHEMA_PROMPT_STYLE, "tools", "tool", "action_schema", "function_schema"}:
         return TOOL_SCHEMA_PROMPT_STYLE
     raise ValueError(f"Unsupported sharded prompt style: {style!r}")
+
+
+def normalize_reveal_policy(policy: str | None) -> str:
+    normalized = (policy or ALWAYS_REVEAL_POLICY).strip().lower().replace("-", "_")
+    if normalized in {ALWAYS_REVEAL_POLICY, "default", "ungated", "auto"}:
+        return ALWAYS_REVEAL_POLICY
+    if normalized in {
+        CLARIFY_ONLY_REVEAL_POLICY,
+        "clarify",
+        "clarification_only",
+        "ask_only",
+        "question_only",
+        "gated",
+    }:
+        return CLARIFY_ONLY_REVEAL_POLICY
+    raise ValueError(f"Unsupported sharded reveal policy: {policy!r}")
 
 
 def normalize_teacher_prompt_style(style: str | None) -> str:
@@ -917,8 +937,10 @@ def run_sharded_interaction(
     sample_fn: Callable[[list[dict[str, str]]], str | SampledResponse],
     max_turns: int | None = None,
     prompt_style: str | None = None,
+    reveal_policy: str | None = None,
 ) -> MultiturnRollout:
     prompt_style = normalize_prompt_style(prompt_style)
+    reveal_policy = normalize_reveal_policy(reveal_policy)
     messages = initial_messages(task, prompt_style=prompt_style)
     turns: list[AssistantTurn] = []
     turn_scores: list[dict[str, Any]] = []
@@ -939,13 +961,16 @@ def run_sharded_interaction(
                 prompt=sample.prompt,
             )
         )
-        turn_scores.append(score_sharded_turn(sample.text, task, revealed_before_turn))
+        turn_score = score_sharded_turn(sample.text, task, revealed_before_turn)
+        turn_scores.append(turn_score)
         messages.append({"role": "assistant", "content": sample.text})
         if contains_environment_impersonation(sample.text):
             break
-        if extract_final_answer(sample.text) is not None:
+        if extract_final_answer(sample.text, task.allow_untagged_final) is not None:
             break
         if revealed_shards < len(task.shards):
+            if reveal_policy == CLARIFY_ONLY_REVEAL_POLICY and turn_score.get("dense_action") != "clarify":
+                break
             messages.append(
                 {
                     "role": "user",
@@ -964,6 +989,11 @@ def run_sharded_interaction(
     final_response = turns[-1].response if turns else ""
     if any(contains_environment_impersonation(turn.response) for turn in turns):
         score = _environment_impersonation_score()
+    elif turn_scores and turn_scores[-1].get("dense_action") in {
+        "premature_final",
+        "malformed_final_markup",
+    }:
+        score = dict(turn_scores[-1])
     else:
         score = score_sharded_response(final_response, task)
     return MultiturnRollout(
@@ -973,4 +1003,5 @@ def run_sharded_interaction(
         revealed_shards=revealed_shards,
         transcript=messages,
         turn_scores=turn_scores,
+        reveal_policy=reveal_policy,
     )
