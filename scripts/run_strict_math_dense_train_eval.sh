@@ -25,7 +25,7 @@ EVAL_RUN="${EVAL_RUN:-lost-math-tools-clean-holdout-dense-rlrf-clarifyonly-train
 TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-datasets/sharded_multiturn/lost_math_actions_tools_200}"
 EVAL_DATA_PATH="${EVAL_DATA_PATH:-$PROJECT_ROOT/_logs/holdouts/lost-math-tools-clean-holdout}"
 
-MODEL_NAME="${MODEL_NAME:-Qwen/Qwen3-8B}"
+MODEL_NAME="${STRICT_MODEL_NAME:-Qwen/Qwen3-8B}"
 RENDERER_NAME="${RENDERER_NAME:-qwen3_disable_thinking}"
 SHARDED_PROMPT_STYLE="${SHARDED_PROMPT_STYLE:-tool_schema}"
 SHARDED_REVEAL_POLICY="${SHARDED_REVEAL_POLICY:-clarify_only}"
